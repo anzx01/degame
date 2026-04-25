@@ -17,6 +17,8 @@ const DROP_DURATION_BASE = 250;
 const SHUFFLE_DURATION = 280;
 const PARTICLE_LIFE = 560;
 const EFFECT_LIFE = 440;
+const COMBO_BURST_LIFE = 820;
+const FLASH_LIFE = 300;
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -67,6 +69,7 @@ class DesktopCleanupApp {
     this.ctx = this.canvas.getContext("2d");
 
     this.goalList = document.getElementById("goalList");
+    this.activityList = document.getElementById("activityList");
     this.levelList = document.getElementById("levelList");
     this.chapterCards = document.getElementById("chapterCards");
     this.chapterLabel = document.getElementById("chapterLabel");
@@ -99,6 +102,7 @@ class DesktopCleanupApp {
     this.resultTitle = document.getElementById("resultTitle");
     this.resultSummary = document.getElementById("resultSummary");
     this.resultUnlock = document.getElementById("resultUnlock");
+    this.resultThemeChips = document.getElementById("resultThemeChips");
     this.resultStars = document.getElementById("resultStars");
     this.resultMetrics = document.getElementById("resultMetrics");
     this.resultProgressLabel = document.getElementById("resultProgressLabel");
@@ -113,6 +117,7 @@ class DesktopCleanupApp {
     this.chapterIntroBadge = document.getElementById("chapterIntroBadge");
     this.chapterIntroTitle = document.getElementById("chapterIntroTitle");
     this.chapterIntroCopy = document.getElementById("chapterIntroCopy");
+    this.chapterIntroChips = document.getElementById("chapterIntroChips");
     this.chapterIntroStats = document.getElementById("chapterIntroStats");
     this.chapterIntroProgressLabel = document.getElementById("chapterIntroProgressLabel");
     this.chapterIntroProgressValue = document.getElementById("chapterIntroProgressValue");
@@ -132,10 +137,14 @@ class DesktopCleanupApp {
     this.effects = [];
     this.particles = [];
     this.floatTexts = [];
+    this.comboBursts = [];
+    this.screenFlashes = [];
+    this.specialCallouts = [];
     this.interactionLocked = false;
     this.liveSnapshot = null;
     this.core = null;
     this.displayBoard = null;
+    this.activityEntries = [];
 
     this.createChapterCards();
     this.createLevelButtons();
@@ -178,6 +187,9 @@ class DesktopCleanupApp {
   applySettings() {
     document.body.classList.toggle("is-high-contrast", Boolean(this.settings.highContrast));
     this.audio.setEnabled(Boolean(this.settings.soundEnabled));
+    if (this.core?.level?.theme) {
+      this.applyLevelTheme(this.core.level.theme);
+    }
     this.updateToggleLabels();
     this.persistProfile();
   }
@@ -280,6 +292,53 @@ class DesktopCleanupApp {
     navigator.vibrate(pattern);
   }
 
+  applyLevelTheme(theme) {
+    const accent = theme?.accent || "#127475";
+    const accentRgb = this.hexToRgb(accent);
+    const strongMix = this.settings.highContrast ? 0.44 : 0.3;
+    const softAlpha = this.settings.highContrast ? 0.2 : 0.14;
+    const faintAlpha = this.settings.highContrast ? 0.12 : 0.08;
+    document.body.style.setProperty("--theme-accent", accent);
+    document.body.style.setProperty("--theme-accent-strong", this.mixColor(accent, "#10242a", strongMix));
+    document.body.style.setProperty("--theme-accent-soft", `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, ${softAlpha})`);
+    document.body.style.setProperty("--theme-accent-faint", `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, ${faintAlpha})`);
+  }
+
+  pushActivity(message, tone = "neutral") {
+    const timestamp = new Date().toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+
+    if (this.activityEntries[0]?.message === message) {
+      return;
+    }
+
+    this.activityEntries.unshift({ timestamp, message, tone });
+    this.activityEntries = this.activityEntries.slice(0, 6);
+    this.renderActivityFeed();
+  }
+
+  renderActivityFeed() {
+    if (!this.activityList) {
+      return;
+    }
+
+    this.activityList.innerHTML = "";
+    this.activityEntries.forEach((item) => {
+      const node = document.createElement("li");
+      node.className = "activity-item";
+      node.dataset.tone = item.tone;
+      node.innerHTML = `
+        <div class="activity-time">${item.timestamp}</div>
+        <div class="activity-text">${item.message}</div>
+      `;
+      this.activityList.appendChild(node);
+    });
+  }
+
   isResultVisible() {
     return !this.resultOverlay.classList.contains("hidden");
   }
@@ -364,6 +423,7 @@ class DesktopCleanupApp {
     const preservedSettings = { ...this.settings };
     this.saveData = createSaveData(preservedSettings);
     this.currentLevelIndex = 0;
+    this.activityEntries = [];
     this.hideResult();
     this.hideChapterIntro();
     this.persistProfile();
@@ -371,6 +431,7 @@ class DesktopCleanupApp {
     this.refreshLevelButtons();
     this.startLevel(0);
     this.setStatus("进度已重置，从第一章重新开始整理。");
+    this.pushActivity("进度已重置，所有章节重新归零。", "warn");
   }
 
   createChapterCards() {
@@ -379,6 +440,7 @@ class DesktopCleanupApp {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "chapter-card";
+      button.style.setProperty("--chapter-card-accent", chapter.theme.accent);
       button.innerHTML = `
         <div class="chapter-card-title">
           <strong>${chapter.name}</strong>
@@ -495,6 +557,7 @@ class DesktopCleanupApp {
     this.hideChapterIntro();
     this.currentLevelIndex = index;
     this.core = new CleanupCore(LEVELS[index]);
+    this.applyLevelTheme(this.core.level.theme);
     this.displayBoard = copyBoard(this.core.board);
     this.liveSnapshot = null;
     this.selectedCell = null;
@@ -505,6 +568,9 @@ class DesktopCleanupApp {
     this.effects = [];
     this.particles = [];
     this.floatTexts = [];
+    this.comboBursts = [];
+    this.screenFlashes = [];
+    this.specialCallouts = [];
     this.interactionLocked = false;
     this.lastInputAt = performance.now();
 
@@ -514,6 +580,7 @@ class DesktopCleanupApp {
     this.refreshLevelButtons();
     this.updateHud();
     this.setStatus("交换相邻图标，先把这一屏从杂乱推回整洁。");
+    this.pushActivity(`进入 ${this.core.level.chapter} · ${this.core.level.name}`, "neutral");
     this.maybeShowChapterIntro(index);
   }
 
@@ -659,6 +726,7 @@ class DesktopCleanupApp {
       this.interactionLocked = false;
       this.updateHud();
       this.audio.playInvalid();
+      this.pushActivity("无效交换，未形成整理链。", "warn");
       this.setStatus(result.reason === "invalid_target"
         ? "这两个位置不能交换。"
         : "这次交换没有形成整理链，图标自动回弹。");
@@ -743,7 +811,7 @@ class DesktopCleanupApp {
 
   async animateCascade(cascade) {
     cascade.clearedTiles.forEach((tile) => {
-      this.spawnParticles(tile.row, tile.col, tile.tileType);
+      this.spawnParticles(tile.row, tile.col, tile.tileType, Math.min(3, cascade.combo));
     });
 
     cascade.effectBursts.forEach((effect) => {
@@ -751,6 +819,7 @@ class DesktopCleanupApp {
         ...effect,
         startedAt: performance.now(),
       });
+      this.pushSpecialCallout(effect);
       this.audio.playSpecial(effect.type);
     });
 
@@ -762,7 +831,14 @@ class DesktopCleanupApp {
     }
 
     this.audio.playClear(cascade.clearedTiles.length, cascade.combo);
-    this.pushFloatText(`连锁 x${cascade.combo}`, 616, 112, "#127475");
+    this.pushFloatText(`连锁 x${cascade.combo}`, 616, 112, this.core.level.theme.accent);
+
+    if (cascade.combo >= 2) {
+      this.pushComboBurst(cascade.combo, cascade.clearedTiles[0]?.tileType);
+      this.pushScreenFlash(Math.min(1.6, 0.55 + cascade.combo * 0.12), cascade.clearedTiles[0]?.tileType);
+    } else if (cascade.effectBursts.length) {
+      this.pushScreenFlash(0.55, cascade.clearedTiles[0]?.tileType);
+    }
 
     this.displayBoard = copyBoard(cascade.afterClearBoard);
     await this.playOverlay({
@@ -824,6 +900,7 @@ class DesktopCleanupApp {
     this.displayBoard = copyBoard(shuffleData.afterBoard);
     this.interactionLocked = wasLocked;
     this.updateHud();
+    this.pushActivity(isAutomatic ? "系统自动洗牌，桌面重新可整理。" : "手动执行洗牌，桌面已重排。", isAutomatic ? "warn" : "neutral");
     if (!isAutomatic) {
       this.setStatus("棋盘已经重新整理洗牌。");
     }
@@ -847,6 +924,7 @@ class DesktopCleanupApp {
 
     this.audio.playResult(stars);
     this.maybeVibrate([20, 40, 20]);
+    this.pushActivity(`完成 ${level.name}，获得 ${stars} 星。`, "positive");
     this.showResult(stars, this.createResultState(previousUnlockedLevel, {
       wasChapterCompleted,
       wasAllCompleted,
@@ -889,15 +967,86 @@ class DesktopCleanupApp {
 
   renderMetricCards(container, metrics) {
     container.innerHTML = "";
-    metrics.forEach((metric) => {
+    metrics.forEach((metric, index) => {
       const card = document.createElement("div");
       card.className = "result-metric";
+      card.style.setProperty("--metric-delay", `${index * 70}ms`);
       card.innerHTML = `
         <div class="result-metric-label">${metric.label}</div>
         <div class="result-metric-value">${metric.value}</div>
       `;
       container.appendChild(card);
     });
+  }
+
+  getClutterLabel(clutter) {
+    if (clutter === "paper") {
+      return "散纸桌面";
+    }
+    if (clutter === "notes") {
+      return "便签堆积";
+    }
+    if (clutter === "windows") {
+      return "弹窗轰炸";
+    }
+    return "线缆残局";
+  }
+
+  getSpecialLabel(type) {
+    if (type === "row") {
+      return "横向归档";
+    }
+    if (type === "col") {
+      return "纵向归档";
+    }
+    if (type === "bomb") {
+      return "磁盘清扫";
+    }
+    if (type === "color") {
+      return "全盘搜索";
+    }
+    if (type === "shuffle") {
+      return "桌面重排";
+    }
+    return "整理工具";
+  }
+
+  renderThemeChips(container, chips) {
+    if (!container) {
+      return;
+    }
+
+    container.innerHTML = "";
+    chips.forEach((chip) => {
+      const node = document.createElement("div");
+      node.className = "theme-chip";
+      node.textContent = chip;
+      container.appendChild(node);
+    });
+  }
+
+  buildIntroChips(chapter, chapterLevels) {
+    return [
+      this.getClutterLabel(chapter.theme.clutter),
+      `${chapterLevels.length} 关章节`,
+      `章节累计 ${this.getChapterStars(chapter.id)}★`,
+    ];
+  }
+
+  buildResultChips(level) {
+    return [
+      this.getClutterLabel(level.theme.clutter),
+      `推荐 ${level.recommendedMoves} 步`,
+      `${level.goals.length} 项任务`,
+    ];
+  }
+
+  triggerOverlayEntrance(overlay, card) {
+    overlay.classList.remove("is-animate-in");
+    card.classList.remove("is-animate-in");
+    void card.offsetWidth;
+    overlay.classList.add("is-animate-in");
+    card.classList.add("is-animate-in");
   }
 
   maybeShowChapterIntro(levelIndex) {
@@ -924,6 +1073,7 @@ class DesktopCleanupApp {
     this.chapterIntroBadge.textContent = this.getCompletedLevelCount() === 0 ? "起始章节" : "新章节";
     this.chapterIntroTitle.textContent = `进入 ${chapter.name}`;
     this.chapterIntroCopy.textContent = chapter.subtitle;
+    this.renderThemeChips(this.chapterIntroChips, this.buildIntroChips(chapter, chapterLevels));
 
     this.renderMetricCards(this.chapterIntroStats, [
       { label: "章节进度", value: `${completed} / ${total}` },
@@ -943,11 +1093,16 @@ class DesktopCleanupApp {
 
     this.saveData.seenChapterIntro[chapterId] = true;
     this.persistProfile();
+    this.triggerOverlayEntrance(this.chapterOverlay, this.chapterIntroCard);
     this.setStatus(`已进入 ${chapter.name}，先熟悉这一章的整理主题。`);
+    this.pushActivity(`章节展开：${chapter.name}`, "positive");
   }
 
   hideChapterIntro() {
     this.chapterOverlay.classList.add("hidden");
+    this.chapterOverlay.classList.remove("is-animate-in");
+    this.chapterIntroCard.classList.remove("is-animate-in");
+    this.chapterIntroChips.innerHTML = "";
   }
 
   createResultState(previousUnlockedLevel, previousState) {
@@ -1021,10 +1176,12 @@ class DesktopCleanupApp {
     this.resultTitle.textContent = resultState.title;
     this.resultSummary.textContent = resultState.summary;
     this.resultUnlock.textContent = resultState.unlockMessage;
+    this.renderThemeChips(this.resultThemeChips, this.buildResultChips(this.core.level));
     this.resultStars.innerHTML = "";
     for (let index = 0; index < 3; index += 1) {
       const star = document.createElement("div");
-      star.className = `result-star${index < stars ? " is-on" : ""}`;
+      star.className = `result-star ${index < stars ? "is-earned" : "is-empty"}`;
+      star.style.setProperty("--star-delay", `${140 + index * 120}ms`);
       star.textContent = "★";
       this.resultStars.appendChild(star);
     }
@@ -1039,6 +1196,12 @@ class DesktopCleanupApp {
       : LEVELS[this.currentLevelIndex + 1].chapterId !== this.core.level.chapterId
         ? `进入 ${LEVELS[this.currentLevelIndex + 1].chapter}`
         : "下一关";
+    if (resultState.mode === "chapter") {
+      this.pushActivity(`章节完成：${this.core.level.chapter}`, "positive");
+    } else if (resultState.mode === "all") {
+      this.pushActivity("全章节整理完毕。", "positive");
+    }
+    this.triggerOverlayEntrance(this.resultOverlay, this.resultCard);
     this.setStatus(
       resultState.mode === "all"
         ? "全部章节已经归档完毕，可以从第一关继续刷星和最佳步数。"
@@ -1050,10 +1213,13 @@ class DesktopCleanupApp {
 
   hideResult() {
     this.resultOverlay.classList.add("hidden");
+    this.resultOverlay.classList.remove("is-animate-in");
+    this.resultCard.classList.remove("is-animate-in");
     this.resultCard.dataset.mode = "level";
     this.resultEyebrow.textContent = "整理完成";
     this.resultBadge.textContent = "本关完成";
     this.resultUnlock.textContent = "";
+    this.resultThemeChips.innerHTML = "";
     this.resultMetrics.innerHTML = "";
     this.resultProgressLabel.textContent = "全局整理进度";
     this.resultProgressValue.textContent = `0 / ${LEVELS.length}`;
@@ -1078,6 +1244,7 @@ class DesktopCleanupApp {
     this.lastInputAt = performance.now();
     if (manual) {
       this.audio.playHint();
+      this.pushActivity("手动提示已显示。", "neutral");
       this.setStatus("提示已高亮：先从发亮的两个图标开始整理。");
     }
   }
@@ -1178,7 +1345,10 @@ class DesktopCleanupApp {
     this.drawBoard(timestamp);
     this.drawOverlayAnimations(timestamp);
     this.drawEffects(timestamp);
+    this.drawScreenFlashes(timestamp);
     this.drawParticles(timestamp);
+    this.drawComboBursts(timestamp);
+    this.drawSpecialCallouts(timestamp);
     this.drawFloatTexts(timestamp);
 
     requestAnimationFrame(this.render.bind(this));
@@ -1198,6 +1368,9 @@ class DesktopCleanupApp {
     this.effects = this.effects.filter((effect) => timestamp - effect.startedAt < EFFECT_LIFE);
     this.particles = this.particles.filter((particle) => timestamp - particle.createdAt < particle.life);
     this.floatTexts = this.floatTexts.filter((text) => timestamp - text.createdAt < text.life);
+    this.comboBursts = this.comboBursts.filter((burst) => timestamp - burst.createdAt < burst.life);
+    this.screenFlashes = this.screenFlashes.filter((flash) => timestamp - flash.createdAt < flash.life);
+    this.specialCallouts = this.specialCallouts.filter((callout) => timestamp - callout.createdAt < callout.life);
 
     if (this.hintPulse && timestamp - this.hintPulse.startedAt > 1400) {
       this.hoverHint = null;
@@ -1639,21 +1812,49 @@ class DesktopCleanupApp {
     });
   }
 
-  spawnParticles(row, col, tileType) {
+  pushComboBurst(combo, tileType) {
+    this.comboBursts.push({
+      combo,
+      tileType,
+      createdAt: performance.now(),
+      life: COMBO_BURST_LIFE,
+    });
+  }
+
+  pushScreenFlash(strength, tileType) {
+    this.screenFlashes.push({
+      strength,
+      tileType,
+      createdAt: performance.now(),
+      life: FLASH_LIFE + strength * 90,
+    });
+  }
+
+  pushSpecialCallout(effect) {
+    this.specialCallouts.push({
+      ...effect,
+      label: this.getSpecialLabel(effect.type),
+      createdAt: performance.now(),
+      life: 760,
+    });
+  }
+
+  spawnParticles(row, col, tileType, intensity = 1) {
     const centerX = BOARD_X + col * TILE_SIZE + TILE_SIZE / 2;
     const centerY = BOARD_Y + row * TILE_SIZE + TILE_SIZE / 2;
     const accent = TILE_DEFS[tileType].accent;
-    for (let index = 0; index < 8; index += 1) {
-      const angle = (Math.PI * 2 * index) / 8 + Math.random() * 0.5;
+    const count = 8 + intensity * 4;
+    for (let index = 0; index < count; index += 1) {
+      const angle = (Math.PI * 2 * index) / count + Math.random() * 0.5;
       this.particles.push({
         x: centerX,
         y: centerY,
-        vx: Math.cos(angle) * (14 + Math.random() * 12),
-        vy: Math.sin(angle) * (14 + Math.random() * 12),
-        size: 2 + Math.random() * 3,
+        vx: Math.cos(angle) * (14 + intensity * 3 + Math.random() * 14),
+        vy: Math.sin(angle) * (14 + intensity * 3 + Math.random() * 14),
+        size: 2 + Math.random() * (3 + intensity * 0.8),
         color: accent,
         createdAt: performance.now(),
-        life: PARTICLE_LIFE,
+        life: PARTICLE_LIFE + intensity * 40,
       });
     }
   }
@@ -1670,6 +1871,54 @@ class DesktopCleanupApp {
       this.ctx.beginPath();
       this.ctx.arc(x, y, size, 0, Math.PI * 2);
       this.ctx.fill();
+      this.ctx.restore();
+    });
+  }
+
+  drawScreenFlashes(timestamp) {
+    this.screenFlashes.forEach((flash) => {
+      const progress = clamp((timestamp - flash.createdAt) / flash.life, 0, 1);
+      const alpha = (1 - progress) * (0.16 + flash.strength * 0.1);
+      const accent = TILE_DEFS[flash.tileType]?.accent || this.core.level.theme.accent;
+      const fill = this.hexToRgba(accent, alpha);
+      const stroke = this.hexToRgba(accent, alpha * 1.2);
+
+      this.ctx.save();
+      this.roundRect(this.ctx, BOARD_X - 14, BOARD_Y - 14, BOARD_PIXEL_SIZE + 28, BOARD_PIXEL_SIZE + 28, 28);
+      this.ctx.fillStyle = fill;
+      this.ctx.fill();
+      this.ctx.lineWidth = 8 + flash.strength * 6;
+      this.ctx.strokeStyle = stroke;
+      this.ctx.stroke();
+      this.ctx.restore();
+    });
+  }
+
+  drawSpecialCallouts(timestamp) {
+    this.specialCallouts.forEach((callout) => {
+      const progress = clamp((timestamp - callout.createdAt) / callout.life, 0, 1);
+      const eased = easeOutCubic(progress);
+      const alpha = 1 - progress;
+      const accent = TILE_DEFS[callout.tileType]?.accent || this.core.level.theme.accent;
+      const x = BOARD_X + callout.col * TILE_SIZE + TILE_SIZE / 2;
+      const y = BOARD_Y + callout.row * TILE_SIZE + TILE_SIZE / 2 - 48 - eased * 18;
+      const width = 122;
+      const height = 34;
+
+      this.ctx.save();
+      this.ctx.globalAlpha = alpha;
+      this.ctx.translate(x, y);
+      this.ctx.scale(0.92 + eased * 0.08, 0.92 + eased * 0.08);
+      this.roundRect(this.ctx, -width / 2, -height / 2, width, height, 999);
+      this.ctx.fillStyle = this.createGradient(-width / 2, 0, width / 2, 0, "#f5c26b", accent);
+      this.ctx.fill();
+      this.ctx.strokeStyle = this.hexToRgba("#ffffff", 0.38);
+      this.ctx.lineWidth = 1.8;
+      this.ctx.stroke();
+      this.ctx.fillStyle = "rgba(255,255,255,0.96)";
+      this.ctx.font = '800 14px "Avenir Next", "PingFang SC", sans-serif';
+      this.ctx.textAlign = "center";
+      this.ctx.fillText(callout.label, 0, 5);
       this.ctx.restore();
     });
   }
@@ -1697,6 +1946,47 @@ class DesktopCleanupApp {
     });
   }
 
+  drawComboBursts(timestamp) {
+    this.comboBursts.forEach((burst, index) => {
+      const progress = clamp((timestamp - burst.createdAt) / burst.life, 0, 1);
+      const eased = easeOutCubic(progress);
+      const alpha = 1 - progress;
+      const accent = TILE_DEFS[burst.tileType]?.accent || this.core.level.theme.accent;
+      const centerX = BOARD_X + BOARD_PIXEL_SIZE / 2;
+      const centerY = 118 + index * 2;
+      const width = 188 + burst.combo * 10;
+      const height = 58;
+
+      this.ctx.save();
+      this.ctx.globalAlpha = alpha;
+      this.ctx.translate(centerX, centerY - eased * 18);
+      this.ctx.scale(0.88 + eased * 0.12, 0.88 + eased * 0.12);
+
+      for (let ray = 0; ray < 6; ray += 1) {
+        this.ctx.save();
+        this.ctx.rotate((Math.PI * 2 * ray) / 6 + progress * 0.4);
+        this.ctx.fillStyle = this.hexToRgba(accent, 0.08 + alpha * 0.08);
+        this.ctx.fillRect(-4, -58, 8, 26);
+        this.ctx.restore();
+      }
+
+      this.roundRect(this.ctx, -width / 2, -height / 2, width, height, 999);
+      this.ctx.fillStyle = this.createGradient(-width / 2, 0, width / 2, 0, "#f6c25c", accent);
+      this.ctx.fill();
+      this.ctx.strokeStyle = this.hexToRgba("#ffffff", 0.45);
+      this.ctx.lineWidth = 2;
+      this.ctx.stroke();
+
+      this.ctx.fillStyle = "rgba(255,255,255,0.96)";
+      this.ctx.font = '800 16px "Avenir Next", "PingFang SC", sans-serif';
+      this.ctx.textAlign = "center";
+      this.ctx.fillText(burst.combo >= 4 ? "桌面爆发" : "连锁推进", 0, -5);
+      this.ctx.font = '900 22px "Avenir Next", "PingFang SC", sans-serif';
+      this.ctx.fillText(`x${burst.combo}`, 0, 18);
+      this.ctx.restore();
+    });
+  }
+
   createGradient(x0, y0, x1, y1, colorA, colorB) {
     const gradient = this.ctx.createLinearGradient(x0, y0, x1, y1);
     gradient.addColorStop(0, colorA);
@@ -1708,6 +1998,11 @@ class DesktopCleanupApp {
     const colorA = this.hexToRgb(hexA);
     const colorB = this.hexToRgb(hexB);
     return `rgb(${Math.round(lerp(colorA.r, colorB.r, ratio))}, ${Math.round(lerp(colorA.g, colorB.g, ratio))}, ${Math.round(lerp(colorA.b, colorB.b, ratio))})`;
+  }
+
+  hexToRgba(hex, alpha) {
+    const color = this.hexToRgb(hex);
+    return `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})`;
   }
 
   hexToRgb(hex) {

@@ -79,15 +79,42 @@ export class SoundEngine {
   }
 
   playSpecial(type) {
-    const mapping = {
-      row: [510, 640],
-      col: [510, 700],
-      bomb: [280, 360],
-      color: [420, 620],
-    };
-    const [a, b] = mapping[type] || [440, 660];
-    this.playTone({ frequency: a, duration: 0.12, type: "sine", gain: 0.06 });
-    this.playTone({ frequency: b, duration: 0.16, type: "triangle", gain: 0.05, delay: 0.03 });
+    if (type === "row") {
+      this.playTone({ frequency: 520, duration: 0.1, type: "triangle", gain: 0.06 });
+      this.playTone({ frequency: 690, duration: 0.14, type: "triangle", gain: 0.05, delay: 0.04 });
+      this.playTone({ frequency: 860, duration: 0.08, type: "sine", gain: 0.04, delay: 0.08 });
+      return;
+    }
+
+    if (type === "col") {
+      this.playTone({ frequency: 470, duration: 0.08, type: "triangle", gain: 0.05 });
+      this.playTone({ frequency: 620, duration: 0.12, type: "triangle", gain: 0.05, delay: 0.03 });
+      this.playTone({ frequency: 780, duration: 0.16, type: "sine", gain: 0.04, delay: 0.07 });
+      return;
+    }
+
+    if (type === "bomb") {
+      this.playTone({ frequency: 260, duration: 0.12, type: "sawtooth", gain: 0.05 });
+      this.playTone({ frequency: 180, duration: 0.16, type: "square", gain: 0.04, delay: 0.03 });
+      this.playTone({ frequency: 340, duration: 0.18, type: "triangle", gain: 0.05, delay: 0.07 });
+      return;
+    }
+
+    if (type === "color") {
+      [420, 540, 680, 840].forEach((frequency, index) => {
+        this.playTone({
+          frequency,
+          duration: 0.14,
+          type: index % 2 ? "triangle" : "sine",
+          gain: 0.045,
+          delay: index * 0.04,
+        });
+      });
+      return;
+    }
+
+    this.playTone({ frequency: 440, duration: 0.12, type: "sine", gain: 0.06 });
+    this.playTone({ frequency: 660, duration: 0.16, type: "triangle", gain: 0.05, delay: 0.03 });
   }
 
   playHint() {

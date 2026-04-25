@@ -1784,12 +1784,28 @@ class DesktopCleanupApp {
 
       if (effect.type === "row") {
         const y = BOARD_Y + effect.row * TILE_SIZE + TILE_SIZE / 2;
+        this.ctx.lineWidth = 18 - progress * 8;
+        this.ctx.strokeStyle = this.hexToRgba(color, 0.22 + (1 - progress) * 0.3);
+        this.ctx.beginPath();
+        this.ctx.moveTo(BOARD_X, y);
+        this.ctx.lineTo(BOARD_X + BOARD_PIXEL_SIZE, y);
+        this.ctx.stroke();
+        this.ctx.lineWidth = 6;
+        this.ctx.strokeStyle = color;
         this.ctx.beginPath();
         this.ctx.moveTo(BOARD_X, y);
         this.ctx.lineTo(BOARD_X + BOARD_PIXEL_SIZE, y);
         this.ctx.stroke();
       } else if (effect.type === "col") {
         const x = BOARD_X + effect.col * TILE_SIZE + TILE_SIZE / 2;
+        this.ctx.lineWidth = 18 - progress * 8;
+        this.ctx.strokeStyle = this.hexToRgba(color, 0.22 + (1 - progress) * 0.3);
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, BOARD_Y);
+        this.ctx.lineTo(x, BOARD_Y + BOARD_PIXEL_SIZE);
+        this.ctx.stroke();
+        this.ctx.lineWidth = 6;
+        this.ctx.strokeStyle = color;
         this.ctx.beginPath();
         this.ctx.moveTo(x, BOARD_Y);
         this.ctx.lineTo(x, BOARD_Y + BOARD_PIXEL_SIZE);
@@ -1799,13 +1815,42 @@ class DesktopCleanupApp {
         this.ctx.lineWidth = 8;
         this.roundRect(this.ctx, BOARD_X - 10, BOARD_Y - 10, BOARD_PIXEL_SIZE + 20, BOARD_PIXEL_SIZE + 20, 24);
         this.ctx.stroke();
-      } else {
+      } else if (effect.type === "bomb") {
         const x = BOARD_X + effect.col * TILE_SIZE + TILE_SIZE / 2;
         const y = BOARD_Y + effect.row * TILE_SIZE + TILE_SIZE / 2;
         const radius = 18 + progress * 58;
+        this.ctx.fillStyle = this.hexToRgba(color, 0.12 + (1 - progress) * 0.16);
         this.ctx.beginPath();
         this.ctx.arc(x, y, radius, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.lineWidth = 6;
+        this.ctx.strokeStyle = color;
         this.ctx.stroke();
+        this.ctx.setLineDash([10, 8]);
+        this.ctx.lineWidth = 3;
+        this.ctx.beginPath();
+        this.ctx.arc(x, y, radius * 0.7, 0, Math.PI * 2);
+        this.ctx.stroke();
+        this.ctx.setLineDash([]);
+      } else {
+        const x = BOARD_X + effect.col * TILE_SIZE + TILE_SIZE / 2;
+        const y = BOARD_Y + effect.row * TILE_SIZE + TILE_SIZE / 2;
+        const radius = 22 + progress * 64;
+        for (let ring = 0; ring < 3; ring += 1) {
+          const ringScale = 0.5 + ring * 0.24;
+          this.ctx.lineWidth = 5 - ring;
+          this.ctx.strokeStyle = this.hexToRgba(color, (1 - progress) * (0.34 - ring * 0.08));
+          this.ctx.beginPath();
+          this.ctx.arc(x, y, radius * ringScale, progress * Math.PI * 2, progress * Math.PI * 2 + Math.PI * 1.4);
+          this.ctx.stroke();
+        }
+        for (let spark = 0; spark < 6; spark += 1) {
+          const angle = progress * 4 + (Math.PI * 2 * spark) / 6;
+          const outer = radius * 0.72;
+          this.ctx.beginPath();
+          this.ctx.arc(x + Math.cos(angle) * outer, y + Math.sin(angle) * outer, 3.2, 0, Math.PI * 2);
+          this.ctx.fill();
+        }
       }
 
       this.ctx.restore();

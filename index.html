@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>桌面整理大师 MVP</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="panel brand-panel">
+        <div class="eyebrow">2D MVP</div>
+        <h1>桌面整理大师</h1>
+        <p class="panel-copy">
+          固定镜头、纯 2D、桌面整理题材三消。当前版本已包含核心关卡、障碍、特殊整理工具、整洁度和本地进度。
+        </p>
+
+        <div class="button-stack">
+          <button id="restartButton" class="button button-primary" type="button">重开本关</button>
+          <button id="hintButton" class="button" type="button">显示提示</button>
+          <button id="shuffleButton" class="button" type="button">整理洗牌</button>
+          <button id="resetProgressButton" class="button button-secondary" type="button">重置进度</button>
+        </div>
+
+        <section class="panel-section">
+          <div class="section-title">设置</div>
+          <div class="toggle-grid">
+            <button id="soundToggle" class="toggle-pill" type="button"></button>
+            <button id="autoHintToggle" class="toggle-pill" type="button"></button>
+            <button id="contrastToggle" class="toggle-pill" type="button"></button>
+            <button id="vibrationToggle" class="toggle-pill" type="button"></button>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">章节总览</div>
+          <div id="chapterCards" class="chapter-grid"></div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">章节</div>
+          <div id="levelList" class="level-list"></div>
+        </section>
+      </aside>
+
+      <main class="main-column">
+        <header class="hud-bar">
+          <div class="hud-meta">
+            <div class="eyebrow" id="chapterLabel">办公桌面</div>
+            <div class="level-title" id="levelTitle">收件箱爆满</div>
+          </div>
+          <div class="progress-block">
+            <div class="progress-label-row">
+              <span>整洁度</span>
+              <span id="cleanlinessLabel">0%</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-fill" id="cleanlinessFill"></div>
+            </div>
+          </div>
+        </header>
+
+        <section class="overview-strip" aria-label="全局进度">
+          <article class="overview-card">
+            <div class="overview-label">总进度</div>
+            <div class="overview-value" id="overallProgressText">0 / 16</div>
+            <div class="mini-progress">
+              <span id="overallProgressFill"></span>
+            </div>
+          </article>
+          <article class="overview-card">
+            <div class="overview-label">总星级</div>
+            <div class="overview-value" id="totalStarsValue">0 / 48</div>
+            <div class="overview-meta" id="chapterProgressText">当前章节 0 / 4</div>
+          </article>
+          <article class="overview-card">
+            <div class="overview-label">章节完成</div>
+            <div class="overview-value" id="chapterCompleteCount">0 / 4</div>
+            <div class="overview-meta" id="bestRecordText">本关最佳 暂无</div>
+          </article>
+        </section>
+
+        <section class="stage-card">
+          <canvas id="gameCanvas" width="720" height="760" aria-label="桌面整理棋盘"></canvas>
+        </section>
+
+        <section class="footer-bar">
+          <div class="stat-card">
+            <div class="stat-label">推荐步数</div>
+            <div class="stat-value" id="recommendedMoves">20</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">当前步数</div>
+            <div class="stat-value" id="movesUsed">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">最佳连锁</div>
+            <div class="stat-value" id="bestCombo">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">整理分数</div>
+            <div class="stat-value" id="scoreValue">0</div>
+          </div>
+        </section>
+      </main>
+
+      <aside class="panel side-panel">
+        <section class="panel-section">
+          <div class="section-title">整理任务</div>
+          <ul id="goalList" class="goal-list"></ul>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">当前状态</div>
+          <p id="statusText" class="status-text" aria-live="polite">
+            交换相邻图标，完成一次桌面清理。
+          </p>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">控制方式</div>
+          <ul class="note-list">
+            <li>点击两个相邻图标交换</li>
+            <li>也可以在棋盘上直接滑动交换</li>
+            <li>按 <kbd>H</kbd> 显示提示</li>
+            <li>按 <kbd>R</kbd> 重开当前关卡</li>
+          </ul>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-title">规则摘要</div>
+          <ul class="note-list">
+            <li>4 连生成批量归档</li>
+            <li>L/T 形生成磁盘清扫</li>
+            <li>5 连生成全盘搜索</li>
+            <li>灰尘靠邻近清理</li>
+            <li>便签要在原格消除</li>
+            <li>弹窗需命中两次</li>
+          </ul>
+        </section>
+      </aside>
+    </div>
+
+    <div id="resultOverlay" class="overlay hidden" role="dialog" aria-modal="true">
+      <div id="resultCard" class="overlay-card" data-mode="level">
+        <div class="eyebrow" id="resultEyebrow">整理完成</div>
+        <div id="resultBadge" class="result-badge">本关完成</div>
+        <h2 id="resultTitle">这一屏已经干净了</h2>
+        <p id="resultSummary" class="result-copy"></p>
+        <p id="resultUnlock" class="result-unlock"></p>
+        <div class="result-stars" id="resultStars"></div>
+        <div id="resultMetrics" class="result-metrics"></div>
+        <div class="result-progress-card">
+          <div class="result-progress-top">
+            <span id="resultProgressLabel">全局整理进度</span>
+            <span id="resultProgressValue">0 / 16</span>
+          </div>
+          <div class="result-progress-track">
+            <span id="resultProgressFill"></span>
+          </div>
+          <p id="resultChapterSummary" class="result-chapter-summary"></p>
+        </div>
+        <div class="button-row">
+          <button id="resultReplay" class="button" type="button">再整理一次</button>
+          <button id="resultNext" class="button button-primary" type="button">下一关</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="chapterOverlay" class="overlay hidden" role="dialog" aria-modal="true">
+      <div id="chapterIntroCard" class="overlay-card chapter-intro-card">
+        <div class="eyebrow" id="chapterIntroEyebrow">章节入口</div>
+        <div id="chapterIntroBadge" class="result-badge">新章节</div>
+        <h2 id="chapterIntroTitle">进入办公桌面</h2>
+        <p id="chapterIntroCopy" class="result-copy"></p>
+        <div id="chapterIntroStats" class="result-metrics"></div>
+        <div class="result-progress-card chapter-intro-progress">
+          <div class="result-progress-top">
+            <span id="chapterIntroProgressLabel">章节进度</span>
+            <span id="chapterIntroProgressValue">0 / 4</span>
+          </div>
+          <div class="result-progress-track">
+            <span id="chapterIntroProgressFill"></span>
+          </div>
+          <p id="chapterIntroPrompt" class="result-chapter-summary"></p>
+        </div>
+        <div class="button-row">
+          <button id="chapterIntroContinue" class="button button-primary" type="button">开始整理</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

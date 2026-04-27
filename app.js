@@ -9,9 +9,9 @@ const LEADERBOARD_KEY = "degame-mvp-leaderboard-v1";
 const TILE_SIZE = 66;
 const BOARD_PIXEL_SIZE = TILE_SIZE * BOARD_SIZE;
 const BOARD_X = 96;
-const BOARD_Y = 148;
+const BOARD_Y = 76;
 const CANVAS_WIDTH = 720;
-const CANVAS_HEIGHT = 760;
+const CANVAS_HEIGHT = 640;
 const IDLE_HINT_DELAY = 6500;
 const SWIPE_THRESHOLD = 22;
 const SWAP_DURATION = 170;
@@ -22,6 +22,14 @@ const PARTICLE_LIFE = 560;
 const EFFECT_LIFE = 440;
 const COMBO_BURST_LIFE = 820;
 const FLASH_LIFE = 300;
+const TILE_SHORT_LABELS = {
+  doc: "文",
+  screenshot: "图",
+  folder: "夹",
+  zip: "压",
+  shortcut: "捷",
+  temp: "临",
+};
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -50,7 +58,7 @@ function boardToPayload(board, row, col) {
   if (!cell || !cell.tileType) {
     return null;
   }
-  return { tileType: cell.tileType, special: cell.special };
+  return { tileType: cell.tileType, special: cell.special, meta: cell.meta ? { ...cell.meta } : null };
 }
 
 function createSaveData(settings = {}) {
@@ -90,6 +98,24 @@ function isBetterLeaderboardRecord(next, current) {
 
 class DesktopCleanupApp {
   constructor() {
+    const sidePanel = document.querySelector?.(".side-panel");
+    const authSection = document.querySelector?.(".auth-section");
+    const gameControlBar = document.querySelector?.(".game-control-bar");
+    const settingsSection = document.querySelector?.(".settings-section");
+    if (sidePanel?.prepend && authSection) {
+      sidePanel.prepend(authSection);
+      if (gameControlBar) {
+        authSection.after(gameControlBar);
+      }
+      if (settingsSection) {
+        if (gameControlBar?.after) {
+          gameControlBar.after(settingsSection);
+        } else {
+          authSection.after(settingsSection);
+        }
+      }
+    }
+
     this.canvas = document.getElementById("gameCanvas");
     this.canvas.width = CANVAS_WIDTH;
     this.canvas.height = CANVAS_HEIGHT;
@@ -119,6 +145,7 @@ class DesktopCleanupApp {
     this.shuffleButton = document.getElementById("shuffleButton");
     this.resetProgressButton = document.getElementById("resetProgressButton");
     this.authSignedOut = document.getElementById("authSignedOut");
+    this.authForm = this.authSignedOut;
     this.authSignedIn = document.getElementById("authSignedIn");
     this.authEmail = document.getElementById("authEmail");
     this.authPassword = document.getElementById("authPassword");
@@ -131,6 +158,12 @@ class DesktopCleanupApp {
     this.leaderboardCount = document.getElementById("leaderboardCount");
     this.leaderboardList = document.getElementById("leaderboardList");
     this.leaderboardEmpty = document.getElementById("leaderboardEmpty");
+    this.desktopSelection = document.getElementById("desktopSelection");
+    this.archiveButton = document.getElementById("archiveButton");
+    this.trashButton = document.getElementById("trashButton");
+    this.closePopupButton = document.getElementById("closePopupButton");
+    this.searchDesktopButton = document.getElementById("searchDesktopButton");
+    this.desktopTray = document.getElementById("desktopTray");
     this.soundToggle = document.getElementById("soundToggle");
     this.soundTestButton = document.getElementById("soundTestButton");
     this.autoHintToggle = document.getElementById("autoHintToggle");
@@ -185,9 +218,11 @@ class DesktopCleanupApp {
     this.specialCallouts = [];
     this.interactionLocked = false;
     this.liveSnapshot = null;
+    this.desktopFocus = null;
     this.core = null;
     this.displayBoard = null;
     this.activityEntries = [];
+    this.desktopCollections = this.createDesktopCollections();
 
     this.createChapterCards();
     this.createLevelButtons();
@@ -253,9 +288,13 @@ class DesktopCleanupApp {
   async hashPassword(email, password) {
     const payload = `${normalizeEmail(email)}:${password}`;
     if (window.crypto?.subtle && window.TextEncoder) {
-      const bytes = new TextEncoder().encode(payload);
-      const digest = await window.crypto.subtle.digest("SHA-256", bytes);
-      return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      try {
+        const bytes = new TextEncoder().encode(payload);
+        const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+        return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      } catch (error) {
+        // Some embedded browsers expose crypto.subtle but reject digest calls on local pages.
+      }
     }
     return btoa(unescape(encodeURIComponent(payload)));
   }
@@ -311,16 +350,17 @@ class DesktopCleanupApp {
     this.hintButton.addEventListener("click", () => this.showHint(true));
     this.shuffleButton.addEventListener("click", () => this.handleShuffle());
     this.resetProgressButton.addEventListener("click", () => this.handleResetProgress());
+    this.authForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      this.handleLogin();
+    });
     this.loginButton.addEventListener("click", () => this.handleLogin());
     this.registerButton.addEventListener("click", () => this.handleRegister());
     this.logoutButton.addEventListener("click", () => this.handleLogout());
-    [this.authEmail, this.authPassword].forEach((input) => {
-      input.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          this.handleLogin();
-        }
-      });
-    });
+    this.archiveButton.addEventListener("click", () => this.handleDesktopAction("archive"));
+    this.trashButton.addEventListener("click", () => this.handleDesktopAction("trash"));
+    this.closePopupButton.addEventListener("click", () => this.handleDesktopAction("close"));
+    this.searchDesktopButton.addEventListener("click", () => this.handleDesktopSearch());
     this.soundToggle.addEventListener("click", () => {
       this.settings.soundEnabled = !this.settings.soundEnabled;
       this.applySettings();
@@ -417,7 +457,10 @@ class DesktopCleanupApp {
 
     const accounts = this.loadAccounts();
     if (accounts[email]) {
-      this.setAuthMessage("这个邮箱已经注册，请直接登录。", "warn");
+      accounts[email].passwordHash = await this.hashPassword(email, password);
+      accounts[email].updatedAt = new Date().toISOString();
+      this.persistAccounts(accounts);
+      this.signIn(email, "账号已存在，已更新本地密码并登录。");
       return;
     }
 
@@ -435,8 +478,23 @@ class DesktopCleanupApp {
     const email = normalizeEmail(this.authEmail.value);
     const password = this.authPassword.value;
     const accounts = this.loadAccounts();
-    if (!isValidEmail(email) || !accounts[email]) {
-      this.setAuthMessage("邮箱或密码不正确。", "warn");
+    if (!isValidEmail(email)) {
+      this.setAuthMessage("请输入有效邮箱。", "warn");
+      return;
+    }
+    if (password.length < 6) {
+      this.setAuthMessage("密码至少需要 6 位。", "warn");
+      return;
+    }
+    if (!accounts[email]) {
+      accounts[email] = {
+        email,
+        name: email.split("@")[0],
+        passwordHash: await this.hashPassword(email, password),
+        createdAt: new Date().toISOString(),
+      };
+      this.persistAccounts(accounts);
+      this.signIn(email, "邮箱未注册，已自动创建账号并登录。");
       return;
     }
 
@@ -464,10 +522,6 @@ class DesktopCleanupApp {
   }
 
   signIn(email, message) {
-    if (this.interactionLocked) {
-      this.setAuthMessage("当前动画结束后再切换账号。", "warn");
-      return;
-    }
     localStorage.setItem(SESSION_KEY, email);
     this.currentUser = { email };
     this.saveData = this.loadProfile();
@@ -614,37 +668,286 @@ class DesktopCleanupApp {
     this.leaderboardCount.textContent = `${records.length} 人`;
     this.leaderboardList.innerHTML = "";
     this.leaderboardEmpty.classList.toggle("hidden", records.length > 0);
+    this.leaderboardEmpty.textContent = records.length > 0
+      ? ""
+      : "暂无通关记录，当前局分数会先显示在榜单里。";
+
+    if (!records.length) {
+      this.leaderboardList.appendChild(this.createLeaderboardItem({
+        rank: "本",
+        name: this.currentUser?.email?.split("@")[0] || "游客",
+        meta: `${this.core.movesUsed} 步 · 连锁 ${this.core.bestCombo || 0} · 通关后入榜`,
+        score: this.core.score,
+        isMe: true,
+        isLive: true,
+      }));
+      return;
+    }
 
     records.slice(0, 8).forEach((record, index) => {
-      const item = document.createElement("li");
-      item.className = "leaderboard-item";
-      if (record.email === this.currentUser?.email) {
-        item.classList.add("is-me");
+      this.leaderboardList.appendChild(this.createLeaderboardItem({
+        rank: String(index + 1),
+        name: record.name || record.email,
+        meta: `${record.stars}★ · ${record.moves} 步 · 连锁 ${record.bestCombo}`,
+        score: record.score,
+        isMe: record.email === this.currentUser?.email,
+      }));
+    });
+  }
+
+  createLeaderboardItem({ rank, name, meta, score, isMe = false, isLive = false }) {
+    const item = document.createElement("li");
+    item.classList.add("leaderboard-item");
+    if (isMe) {
+      item.classList.add("is-me");
+    }
+    if (isLive) {
+      item.classList.add("is-live");
+    }
+
+    const rankNode = document.createElement("span");
+    rankNode.className = "leaderboard-rank";
+    rankNode.textContent = rank;
+
+    const body = document.createElement("span");
+    body.className = "leaderboard-body";
+
+    const nameNode = document.createElement("span");
+    nameNode.className = "leaderboard-name";
+    nameNode.textContent = name;
+
+    const metaNode = document.createElement("span");
+    metaNode.className = "leaderboard-meta";
+    metaNode.textContent = meta;
+
+    const scoreNode = document.createElement("span");
+    scoreNode.className = "leaderboard-score";
+    scoreNode.textContent = String(score);
+
+    body.append(nameNode, metaNode);
+    item.append(rankNode, body, scoreNode);
+    return item;
+  }
+
+  createDesktopCollections() {
+    return {
+      folders: {},
+      trash: 0,
+      recent: [],
+    };
+  }
+
+  shouldSendToTrash(tile) {
+    return tile.tileType === "temp" || tile.meta?.state === "duplicate" || tile.meta?.state === "old" || tile.meta?.state === "temp";
+  }
+
+  getFolderNameForTile(tile) {
+    return tile.meta?.project || TILE_DEFS[tile.tileType]?.label || "未分类";
+  }
+
+  getTileShortLabel(tileType) {
+    return TILE_SHORT_LABELS[tileType] || TILE_DEFS[tileType]?.label?.slice(0, 1) || "?";
+  }
+
+  collectClearedTiles(clearedTiles, combo = 1) {
+    const arrivals = [];
+    clearedTiles.forEach((tile) => {
+      const def = TILE_DEFS[tile.tileType];
+      if (!def) {
+        return;
       }
 
-      const rank = document.createElement("span");
-      rank.className = "leaderboard-rank";
-      rank.textContent = String(index + 1);
+      if (this.shouldSendToTrash(tile)) {
+        this.desktopCollections.trash += 1;
+        arrivals.push({
+          target: "trash",
+          label: this.getTileShortLabel(tile.tileType),
+          title: def.label,
+          tone: "trash",
+        });
+        return;
+      }
 
-      const body = document.createElement("span");
-      body.className = "leaderboard-body";
-
-      const name = document.createElement("span");
-      name.className = "leaderboard-name";
-      name.textContent = record.name || record.email;
-
-      const meta = document.createElement("span");
-      meta.className = "leaderboard-meta";
-      meta.textContent = `${record.stars}★ · ${record.moves} 步 · 连锁 ${record.bestCombo}`;
-
-      const score = document.createElement("span");
-      score.className = "leaderboard-score";
-      score.textContent = String(record.score);
-
-      body.append(name, meta);
-      item.append(rank, body, score);
-      this.leaderboardList.appendChild(item);
+      const folder = this.getFolderNameForTile(tile);
+      this.desktopCollections.folders[folder] = (this.desktopCollections.folders[folder] || 0) + 1;
+      arrivals.push({
+        target: folder,
+        label: this.getTileShortLabel(tile.tileType),
+        title: def.label,
+        tone: "folder",
+      });
     });
+
+    if (arrivals.length) {
+      this.desktopCollections.recent = [
+        ...arrivals.map((arrival) => ({ ...arrival, combo, id: `${Date.now()}-${Math.random()}` })),
+        ...this.desktopCollections.recent,
+      ].slice(0, 10);
+    }
+
+    return arrivals;
+  }
+
+  getSelectedCell() {
+    if (!this.selectedCell || !isInsideBoard(this.selectedCell.row, this.selectedCell.col)) {
+      return null;
+    }
+    return this.selectedCell;
+  }
+
+  getSelectedCellData() {
+    const selected = this.getSelectedCell();
+    if (!selected || !this.core?.board) {
+      return null;
+    }
+    return this.core.board[selected.row][selected.col];
+  }
+
+  getFileStateLabel(state) {
+    if (state === "duplicate") {
+      return "重复";
+    }
+    if (state === "old") {
+      return "过期";
+    }
+    if (state === "temp") {
+      return "临时";
+    }
+    if (state === "today") {
+      return "今日";
+    }
+    return "常规";
+  }
+
+  getSelectedDescription() {
+    const cell = this.getSelectedCellData();
+    if (!cell) {
+      return "先选中一个桌面图标或弹窗。";
+    }
+    if (cell.blocker?.type === "popup" && !cell.tileType) {
+      return `已选中弹窗 · 剩余 ${cell.blocker.hp} 次关闭`;
+    }
+    if (!cell.tileType) {
+      return "选中位置没有可整理对象。";
+    }
+
+    const def = TILE_DEFS[cell.tileType];
+    const meta = cell.meta || {};
+    return `${def.label} · ${meta.project || "未分类"} · ${meta.source || "桌面"} · ${this.getFileStateLabel(meta.state)}`;
+  }
+
+  async handleDesktopAction(action) {
+    if (this.interactionLocked || this.core.completed) {
+      return;
+    }
+
+    this.activateAudio();
+    const target = this.getSelectedCell();
+    const result = this.core.performDesktopAction(action, target);
+    if (!result.valid) {
+      this.handleDesktopActionError(result.reason, action);
+      return;
+    }
+
+    this.interactionLocked = true;
+    this.desktopFocus = null;
+    this.liveSnapshot = {
+      cleanliness: result.cleanlinessAfter,
+      score: result.scoreAfter,
+      movesUsed: result.movesUsedAfter,
+      bestCombo: result.bestComboAfter,
+      goals: result.goalsAfter,
+    };
+
+    this.displayBoard = copyBoard(result.beforeBoard);
+    this.updateHud();
+    await this.animateDesktopAction(result);
+    this.displayBoard = copyBoard(result.endBoard);
+    this.liveSnapshot = null;
+    this.selectedCell = null;
+    this.interactionLocked = false;
+    this.updateHud();
+    this.audio.playHint();
+    this.pushActivity(`${result.actionLabel}，桌面整洁度 +${result.cleanlinessGain}`, "positive");
+    this.setStatus(`${result.actionLabel}完成。三消负责批量整理，工具负责处理明确对象。`);
+
+    if (result.completed) {
+      this.handleCompletion(result.stars);
+    }
+  }
+
+  handleDesktopActionError(reason, action) {
+    const messages = {
+      no_target: "先选中一个图标、便签或弹窗，再使用桌面整理工具。",
+      archive_requires_file: "归档工具适合文档、截图、文件夹、压缩包和快捷方式，临时文件请丢进回收站。",
+      trash_requires_junk: "回收站只处理临时、重复或过期文件，正常项目文件需要归档。",
+      close_requires_popup: "关闭弹窗工具需要选中弹窗，也可以在有弹窗时直接点这个按钮。",
+      pin_requires_note: "便签工具需要选中便签。",
+      unknown_action: "这个整理动作还不可用。",
+    };
+    this.audio.playInvalid();
+    this.setStatus(messages[reason] || `当前对象不能执行 ${action}。`);
+  }
+
+  async animateDesktopAction(result) {
+    const clearTiles = result.clearedTiles || [];
+    clearTiles.forEach((tile) => {
+      this.spawnParticles(tile.row, tile.col, tile.tileType, 1);
+    });
+
+    if (result.blockersRemoved?.length) {
+      this.audio.playBlocker();
+      this.maybeVibrate([10, 16, 10]);
+    }
+
+    if (clearTiles.length) {
+      await this.playOverlay({
+        type: "clear",
+        duration: CLEAR_DURATION,
+        easing: easeOutCubic,
+        tiles: clearTiles.map((tile) => ({
+          payload: { tileType: tile.tileType, special: tile.special, meta: tile.meta },
+          at: { row: tile.row, col: tile.col },
+        })),
+      });
+    }
+
+    if (result.drops?.length) {
+      const hiddenTileKeys = result.drops
+        .filter((drop) => drop.from.row >= 0)
+        .map((drop) => cellKey(drop.from.row, drop.from.col));
+      await this.playOverlay({
+        type: "drop",
+        duration: DROP_DURATION_BASE + Math.min(120, this.maxDropDistance(result.drops) * 22),
+        easing: easeInOutCubic,
+        hiddenTileKeys,
+        drops: result.drops,
+      });
+    }
+  }
+
+  handleDesktopSearch() {
+    if (this.interactionLocked || !this.core) {
+      return;
+    }
+
+    const cell = this.getSelectedCellData();
+    if (!cell?.tileType || !cell.meta?.project) {
+      this.setStatus("先选中一个带项目归属的文件，再搜索同项目。");
+      this.audio.playInvalid();
+      return;
+    }
+
+    this.desktopFocus = {
+      project: cell.meta.project,
+      tileType: cell.tileType,
+      startedAt: performance.now(),
+    };
+    this.core.desktopActions.search = (this.core.desktopActions.search || 0) + 1;
+    this.pushActivity(`搜索同项目：${cell.meta.project}`, "neutral");
+    this.setStatus(`已高亮 ${cell.meta.project} 项目的相关文件，优先把它们归档或配成三消。`);
+    this.audio.playHint();
+    this.updateHud();
   }
 
   isResultVisible() {
@@ -865,12 +1168,14 @@ class DesktopCleanupApp {
     this.hideChapterIntro();
     this.currentLevelIndex = index;
     this.core = new CleanupCore(LEVELS[index]);
+    this.desktopCollections = this.createDesktopCollections();
     this.applyLevelTheme(this.core.level.theme);
     this.displayBoard = copyBoard(this.core.board);
     this.liveSnapshot = null;
     this.selectedCell = null;
     this.hoverHint = null;
     this.hintPulse = null;
+    this.desktopFocus = null;
     this.pointerSession = null;
     this.overlayAnimations = [];
     this.effects = [];
@@ -992,24 +1297,34 @@ class DesktopCleanupApp {
     this.hintPulse = null;
 
     if (!this.core.isInteractable(cell.row, cell.col)) {
-      this.setStatus("这个格子被弹窗占住了，先从旁边把它关掉。");
+      const blockedCell = this.core.board[cell.row][cell.col];
+      if (blockedCell?.blocker?.type === "popup") {
+        this.selectedCell = cell;
+        this.updateHud();
+        this.setStatus("已选中弹窗，可以使用“关闭弹窗”工具直接处理。");
+        return;
+      }
+      this.setStatus("这个位置暂时不能交换，先通过三消或整理工具处理障碍。");
       return;
     }
 
     if (!this.selectedCell) {
       this.selectedCell = cell;
-      this.setStatus(`已选中 ${TILE_DEFS[this.displayBoard[cell.row][cell.col].tileType].label}。`);
+      this.updateHud();
+      this.setStatus(`已选中 ${this.getSelectedDescription()}。`);
       return;
     }
 
     if (this.selectedCell.row === cell.row && this.selectedCell.col === cell.col) {
       this.selectedCell = null;
+      this.updateHud();
       return;
     }
 
     if (!areAdjacent(this.selectedCell, cell)) {
       this.selectedCell = cell;
-      this.setStatus(`重新选中 ${TILE_DEFS[this.displayBoard[cell.row][cell.col].tileType].label}。`);
+      this.updateHud();
+      this.setStatus(`重新选中 ${this.getSelectedDescription()}。`);
       return;
     }
 
@@ -1141,6 +1456,10 @@ class DesktopCleanupApp {
 
     this.audio.playClear(cascade.clearedTiles.length, cascade.combo);
     this.pushFloatText(`连锁 x${cascade.combo}`, 616, 112, this.core.level.theme.accent);
+    const arrivals = this.collectClearedTiles(cascade.clearedTiles, cascade.combo);
+    this.renderDesktopTools();
+    this.pulseDesktopTargets(arrivals);
+    this.pushActivity(this.buildDesktopCascadeSummary(cascade), cascade.combo >= 2 ? "positive" : "neutral");
 
     if (cascade.combo >= 2) {
       this.pushComboBurst(cascade.combo, cascade.clearedTiles[0]?.tileType);
@@ -1155,7 +1474,7 @@ class DesktopCleanupApp {
       duration: CLEAR_DURATION,
       easing: easeOutCubic,
       tiles: cascade.clearedTiles.map((tile) => ({
-        payload: { tileType: tile.tileType, special: tile.special },
+        payload: { tileType: tile.tileType, special: tile.special, meta: tile.meta },
         at: { row: tile.row, col: tile.col },
       })),
     });
@@ -1174,6 +1493,23 @@ class DesktopCleanupApp {
     }
 
     this.displayBoard = copyBoard(cascade.endBoard);
+  }
+
+  buildDesktopCascadeSummary(cascade) {
+    const projectCounts = new Map();
+    cascade.clearedTiles.forEach((tile) => {
+      const project = tile.meta?.project || TILE_DEFS[tile.tileType]?.label || "文件";
+      projectCounts.set(project, (projectCounts.get(project) || 0) + 1);
+    });
+    const [project, count] = Array.from(projectCounts.entries()).sort((a, b) => b[1] - a[1])[0] || ["文件", 0];
+    const blockerCount = cascade.blockersRemoved?.length || 0;
+    const action = count >= 5
+      ? "批量归档"
+      : cascade.clearedTiles.some((tile) => tile.tileType === "temp" || tile.meta?.state === "duplicate")
+        ? "清理无用文件"
+        : "归档项目文件";
+    const blockerText = blockerCount ? `，顺手处理 ${blockerCount} 个障碍` : "";
+    return `${action}：${project} ${count} 项${blockerText}`;
   }
 
   maxDropDistance(drops) {
@@ -1361,10 +1697,8 @@ class DesktopCleanupApp {
 
   maybeShowChapterIntro(levelIndex) {
     const level = LEVELS[levelIndex];
-    if (this.saveData.seenChapterIntro[level.chapterId]) {
-      return;
-    }
-    this.showChapterIntro(level.chapterId, levelIndex);
+    this.saveData.seenChapterIntro[level.chapterId] = true;
+    this.persistProfile();
   }
 
   showChapterIntro(chapterId, levelIndex = this.currentLevelIndex) {
@@ -1604,7 +1938,7 @@ class DesktopCleanupApp {
       item.className = `goal-item${current >= goal.target ? " is-complete" : ""}`;
       item.innerHTML = `
         <div class="goal-topline">
-          <span class="goal-title">${describeGoal(goal)}</span>
+          <span class="goal-title">${this.describeDesktopGoal(goal)}</span>
           <span class="goal-progress">${Math.min(current, goal.target)} / ${goal.target}</span>
         </div>
         <div class="goal-meter"><span style="width: ${progressRate * 100}%"></span></div>
@@ -1616,6 +1950,102 @@ class DesktopCleanupApp {
     this.restartButton.disabled = disabled;
     this.hintButton.disabled = disabled;
     this.shuffleButton.disabled = disabled;
+    this.archiveButton.disabled = disabled;
+    this.trashButton.disabled = disabled;
+    this.closePopupButton.disabled = disabled;
+    this.searchDesktopButton.disabled = disabled;
+    this.renderLeaderboard();
+    this.renderDesktopTools();
+  }
+
+  renderDesktopTools() {
+    if (!this.desktopSelection || !this.desktopTray || !this.core) {
+      return;
+    }
+
+    const folderEntries = Object.entries(this.desktopCollections.folders)
+      .sort((a, b) => b[1] - a[1]);
+    const folderCards = folderEntries.length
+      ? folderEntries.map(([name, count]) => this.renderTargetCard(name, count, "folder")).join("")
+      : this.renderTargetCard("项目文件夹", 0, "folder");
+    const recent = this.desktopCollections.recent.length
+      ? `<div class="target-recent">${this.desktopCollections.recent.map((item) => `
+          <span class="target-chip" data-tone="${item.tone}" title="${item.title}">${item.label}</span>
+        `).join("")}</div>`
+      : "";
+
+    this.desktopSelection.textContent = "左侧三消清掉的文件会按项目飞入文件夹；临时、重复、过期文件会进入垃圾箱。";
+    this.desktopTray.innerHTML = `
+      ${folderCards}
+      ${this.renderTargetCard("垃圾箱", this.desktopCollections.trash, "trash")}
+      ${recent}
+    `;
+    return;
+
+    this.desktopSelection.textContent = this.getSelectedDescription();
+    const actions = this.core.desktopActions || {};
+    this.desktopTray.innerHTML = `
+      <div><strong>${actions.archive || 0}</strong><span>已归档</span></div>
+      <div><strong>${actions.trash || 0}</strong><span>回收站</span></div>
+      <div><strong>${actions.close || 0}</strong><span>弹窗</span></div>
+      <div><strong>${actions.search || 0}</strong><span>搜索</span></div>
+    `;
+  }
+
+  describeDesktopGoal(goal) {
+    if (goal.type === "collect_tile") {
+      const label = TILE_DEFS[goal.tileType]?.label || goal.tileType;
+      if (goal.tileType === "temp") {
+        return `移入垃圾箱：${label}`;
+      }
+      if (goal.tileType === "screenshot") {
+        return `归档截图文件`;
+      }
+      return `归档 ${label}`;
+    }
+    if (goal.type === "clear_blocker") {
+      if (goal.blockerType === "dust") {
+        return "清理桌面灰尘";
+      }
+      if (goal.blockerType === "sticky_note") {
+        return "整理便签";
+      }
+      return "关闭弹窗";
+    }
+    return describeGoal(goal);
+  }
+
+  renderTargetCard(name, count, type) {
+    return `
+      <div class="desktop-target-card" data-target-type="${type}" data-target-name="${name}">
+        <div class="target-icon">${type === "trash" ? "删" : "夹"}</div>
+        <div>
+          <strong>${name}</strong>
+          <span>${count} 个文件</span>
+        </div>
+      </div>
+    `;
+  }
+
+  pulseDesktopTargets(arrivals) {
+    if (!arrivals.length || !this.desktopTray) {
+      return;
+    }
+
+    const escape = window.CSS?.escape || ((value) => String(value).replaceAll('"', '\\"'));
+    const targets = new Set(arrivals.map((arrival) => arrival.target));
+    targets.forEach((target) => {
+      const selector = target === "trash"
+        ? '.desktop-target-card[data-target-type="trash"]'
+        : `.desktop-target-card[data-target-name="${escape(target)}"]`;
+      const node = this.desktopTray.querySelector(selector);
+      if (!node) {
+        return;
+      }
+      node.classList.remove("is-receiving");
+      void node.offsetWidth;
+      node.classList.add("is-receiving");
+    });
   }
 
   setStatus(message) {
@@ -1651,7 +2081,6 @@ class DesktopCleanupApp {
 
     this.drawBackdrop();
     this.drawBoardPanel();
-    this.drawGoalStrip();
     this.drawBoard(timestamp);
     this.drawOverlayAnimations(timestamp);
     this.drawEffects(timestamp);
@@ -1785,6 +2214,46 @@ class DesktopCleanupApp {
     }
   }
 
+  drawDesktopZones() {
+    const profile = this.core.level.desktopProfile || {};
+    const zones = profile.zones || ["项目文件夹", "下载区", "回收站"];
+    const actions = this.core.desktopActions || {};
+    const items = [
+      { label: zones[0] || "项目文件夹", value: actions.archive || 0, icon: "夹", color: "#cb8e2d" },
+      { label: zones[1] || "下载区", value: actions.search || 0, icon: "搜", color: "#4a6bd6" },
+      { label: zones[2] || "回收站", value: actions.trash || 0, icon: "删", color: "#9a6b2f" },
+    ];
+
+    this.ctx.save();
+    items.forEach((item, index) => {
+      const x = 96 + index * 184;
+      const y = 692;
+      this.roundRect(this.ctx, x, y, 160, 48, 18);
+      this.ctx.fillStyle = "rgba(255, 253, 246, 0.76)";
+      this.ctx.fill();
+      this.ctx.strokeStyle = this.hexToRgba(item.color, 0.28);
+      this.ctx.lineWidth = 1.5;
+      this.ctx.stroke();
+
+      this.roundRect(this.ctx, x + 12, y + 11, 34, 26, 9);
+      this.ctx.fillStyle = this.hexToRgba(item.color, 0.16);
+      this.ctx.fill();
+      this.ctx.fillStyle = item.color;
+      this.ctx.font = '800 10px "Avenir Next", "PingFang SC", sans-serif';
+      this.ctx.textAlign = "center";
+      this.ctx.fillText(item.icon, x + 29, y + 28);
+
+      this.ctx.textAlign = "left";
+      this.ctx.fillStyle = "rgba(24, 32, 40, 0.78)";
+      this.ctx.font = '800 13px "Avenir Next", "PingFang SC", sans-serif';
+      this.ctx.fillText(item.label, x + 54, y + 21);
+      this.ctx.fillStyle = "rgba(24, 32, 40, 0.48)";
+      this.ctx.font = '700 11px "Avenir Next", "PingFang SC", sans-serif';
+      this.ctx.fillText(`已处理 ${item.value}`, x + 54, y + 36);
+    });
+    this.ctx.restore();
+  }
+
   drawBoardPanel() {
     this.ctx.save();
     this.ctx.shadowColor = "rgba(0, 0, 0, 0.18)";
@@ -1816,6 +2285,13 @@ class DesktopCleanupApp {
     this.ctx.fillStyle = this.createGradient(250, 64, 590, 82, "#f1b454", "#1ba79b");
     this.ctx.fill();
     this.ctx.restore();
+  }
+
+  isDesktopFocusCell(cell) {
+    if (!this.desktopFocus || !cell?.tileType || !cell.meta) {
+      return false;
+    }
+    return cell.meta.project === this.desktopFocus.project || cell.tileType === this.desktopFocus.tileType;
   }
 
   drawBoard(timestamp) {
@@ -1856,8 +2332,18 @@ class DesktopCleanupApp {
           this.ctx.restore();
         }
 
+        if (this.isDesktopFocusCell(cell)) {
+          const pulse = this.desktopFocus ? (Math.sin((timestamp - this.desktopFocus.startedAt) / 160) + 1) / 2 : 0.5;
+          this.ctx.save();
+          this.roundRect(this.ctx, x + 7, y + 7, TILE_SIZE - 14, TILE_SIZE - 14, 16);
+          this.ctx.strokeStyle = `rgba(74, 107, 214, ${0.36 + pulse * 0.36})`;
+          this.ctx.lineWidth = 4;
+          this.ctx.stroke();
+          this.ctx.restore();
+        }
+
         if (cell.tileType && !hidden.has(cellKey(row, col))) {
-          this.drawTilePayload({ tileType: cell.tileType, special: cell.special }, x + TILE_SIZE / 2, y + TILE_SIZE / 2, 1, 1);
+          this.drawTilePayload({ tileType: cell.tileType, special: cell.special, meta: cell.meta }, x + TILE_SIZE / 2, y + TILE_SIZE / 2, 1, 1);
         }
 
         if (cell.blocker) {
@@ -1891,6 +2377,38 @@ class DesktopCleanupApp {
     }
 
     this.drawTileIcon(def, payload.special);
+    this.drawTileMeta(payload.meta);
+    this.ctx.restore();
+  }
+
+  drawTileMeta(meta) {
+    if (!meta) {
+      return;
+    }
+
+    const project = String(meta.project || "?").slice(0, 1);
+    const stateColor = meta.state === "duplicate"
+      ? "#d36b43"
+      : meta.state === "old" || meta.state === "temp"
+        ? "#9a6b2f"
+        : "#127475";
+
+    this.ctx.save();
+    this.roundRect(this.ctx, -23, -24, 17, 14, 6);
+    this.ctx.fillStyle = stateColor;
+    this.ctx.fill();
+    this.ctx.fillStyle = "#ffffff";
+    this.ctx.font = '800 9px "Avenir Next", "PingFang SC", sans-serif';
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText(project, -14.5, -17);
+
+    if (meta.state === "duplicate" || meta.state === "temp" || meta.state === "old") {
+      this.ctx.beginPath();
+      this.ctx.arc(19, -19, 4.2, 0, Math.PI * 2);
+      this.ctx.fillStyle = stateColor;
+      this.ctx.fill();
+    }
     this.ctx.restore();
   }
 
@@ -2063,7 +2581,7 @@ class DesktopCleanupApp {
           const x = lerp(drop.from.col, drop.to.col, progress);
           const y = lerp(drop.from.row, drop.to.row, progress);
           this.drawTilePayload(
-            { tileType: drop.tileType, special: drop.special },
+            { tileType: drop.tileType, special: drop.special, meta: drop.meta },
             BOARD_X + x * TILE_SIZE + TILE_SIZE / 2,
             BOARD_Y + y * TILE_SIZE + TILE_SIZE / 2,
             1,
@@ -2391,6 +2909,9 @@ export {
 
 if (typeof window !== "undefined") {
   window.addEventListener("DOMContentLoaded", () => {
-    new DesktopCleanupApp();
+    const shell = document.querySelector(".app-shell");
+    if (shell && !shell.hidden) {
+      new DesktopCleanupApp();
+    }
   });
 }

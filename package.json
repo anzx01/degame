@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "check:core": "node check-core.mjs",
-    "check:ui": "node check-ui.mjs"
+    "check:ui": "node check-ui.mjs",
+    "check:desktop": "node check-real-desktop.mjs"
   }
 }

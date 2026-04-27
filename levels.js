@@ -4,42 +4,42 @@ export const TILE_DEFS = {
   doc: {
     id: "doc",
     label: "文档",
-    short: "DOC",
+    short: "文",
     color: "#f4f8ff",
     accent: "#4375d9",
   },
   screenshot: {
     id: "screenshot",
     label: "截图",
-    short: "PNG",
+    short: "图",
     color: "#e7fbff",
     accent: "#2b9d8f",
   },
   folder: {
     id: "folder",
     label: "文件夹",
-    short: "DIR",
+    short: "夹",
     color: "#fff2d6",
     accent: "#cb8e2d",
   },
   zip: {
     id: "zip",
     label: "压缩包",
-    short: "ZIP",
+    short: "压",
     color: "#efe6ff",
     accent: "#7a54bf",
   },
   shortcut: {
     id: "shortcut",
     label: "快捷方式",
-    short: "APP",
+    short: "捷",
     color: "#dcecff",
     accent: "#3e83d1",
   },
   temp: {
     id: "temp",
     label: "临时文件",
-    short: "TMP",
+    short: "临",
     color: "#e6fff3",
     accent: "#4ea76e",
   },
@@ -53,6 +53,33 @@ export const DEFAULT_SETTINGS = {
 };
 
 const BASE_TILE_TYPES = ["doc", "screenshot", "folder", "zip", "shortcut", "temp"];
+
+export const DESKTOP_PROFILES = {
+  office: {
+    projects: ["晨会", "合同", "报销", "客户"],
+    sources: ["收件箱", "下载区", "桌面"],
+    zones: ["项目文件夹", "收件箱", "回收站"],
+    stateWeights: ["normal", "normal", "today", "duplicate"],
+  },
+  study: {
+    projects: ["数学", "英语", "论文", "复习"],
+    sources: ["课程资料", "下载区", "桌面"],
+    zones: ["科目文件夹", "待复习", "回收站"],
+    stateWeights: ["normal", "today", "old", "duplicate"],
+  },
+  creator: {
+    projects: ["素材", "导出", "源文件", "发布"],
+    sources: ["设计软件", "下载区", "桌面"],
+    zones: ["项目素材库", "导出目录", "回收站"],
+    stateWeights: ["normal", "normal", "today", "duplicate"],
+  },
+  night: {
+    projects: ["更新", "录像", "下载", "插件"],
+    sources: ["启动器", "下载区", "桌面"],
+    zones: ["游戏目录", "下载区", "回收站"],
+    stateWeights: ["normal", "old", "duplicate", "temp"],
+  },
+};
 
 export const CHAPTERS = [
   {
@@ -122,11 +149,67 @@ function createLevel(config) {
     tileTypes: BASE_TILE_TYPES,
     goals: config.goals,
     blockers: config.blockers,
+    desktopProfile: {
+      ...DESKTOP_PROFILES[config.chapterId],
+      ...(config.desktopProfile || {}),
+    },
     theme: {
       ...chapter.theme,
       ...(config.themeOverrides || {}),
     },
   };
+}
+
+export function describeDesktopGoal(goal) {
+  if (goal.type === "collect_tile") {
+    const label = TILE_DEFS[goal.tileType].label;
+    if (goal.tileType === "temp") {
+      return `移走 ${label}`;
+    }
+    if (goal.tileType === "screenshot") {
+      return `归档 ${label}`;
+    }
+    if (goal.tileType === "zip") {
+      return `整理 ${label}`;
+    }
+    return `归档 ${label}`;
+  }
+
+  if (goal.type === "collect_project") {
+    return `归档 ${goal.project} 项目`;
+  }
+
+  if (goal.type === "collect_state") {
+    if (goal.state === "duplicate") {
+      return "处理重复文件";
+    }
+    if (goal.state === "old") {
+      return "清理过期文件";
+    }
+    return "处理标记文件";
+  }
+
+  if (goal.type === "clear_blocker") {
+    if (goal.blockerType === "dust") {
+      return "擦掉桌面灰尘";
+    }
+    if (goal.blockerType === "sticky_note") {
+      return "整理便签";
+    }
+    return "关闭弹窗";
+  }
+
+  if (goal.type === "use_desktop_action") {
+    if (goal.action === "archive") {
+      return "手动归档文件";
+    }
+    if (goal.action === "trash") {
+      return "丢弃无用文件";
+    }
+    return "执行桌面整理";
+  }
+
+  return "恢复整洁度";
 }
 
 export const LEVELS = [

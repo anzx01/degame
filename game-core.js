@@ -1,7 +1,7 @@
 import { BOARD_SIZE } from "./levels.js";
 
 export function createCell() {
-  return { tileType: null, special: null, blocker: null };
+  return { tileType: null, special: null, blocker: null, meta: null };
 }
 
 export function cloneCell(cell) {
@@ -9,6 +9,7 @@ export function cloneCell(cell) {
     tileType: cell.tileType,
     special: cell.special,
     blocker: cell.blocker ? { ...cell.blocker } : null,
+    meta: cell.meta ? { ...cell.meta } : null,
   };
 }
 
@@ -36,6 +37,7 @@ function copyPayload(cell) {
   return {
     tileType: cell.tileType,
     special: cell.special,
+    meta: cell.meta ? { ...cell.meta } : null,
   };
 }
 
@@ -55,6 +57,13 @@ export class CleanupCore {
     this.cleanliness = 0;
     this.completed = false;
     this.goalsProgress = this.createGoalProgress(level);
+    this.desktopActions = {
+      archive: 0,
+      trash: 0,
+      close: 0,
+      pin: 0,
+      search: 0,
+    };
   }
 
   createGoalProgress(level) {
@@ -66,7 +75,7 @@ export class CleanupCore {
   }
 
   goalKey(goal, index) {
-    return `${index}-${goal.type}-${goal.tileType || goal.blockerType || goal.target}`;
+    return `${index}-${goal.type}-${goal.tileType || goal.blockerType || goal.project || goal.state || goal.action || goal.target}`;
   }
 
   getGoalCurrent(goal, index) {
@@ -101,6 +110,44 @@ export class CleanupCore {
 
   randomTileType() {
     return this.level.tileTypes[this.randomIndex(this.level.tileTypes.length)];
+  }
+
+  randomFrom(values, fallback) {
+    return values?.length ? values[this.randomIndex(values.length)] : fallback;
+  }
+
+  randomTileMeta(tileType) {
+    const profile = this.level.desktopProfile || {};
+    const project = this.randomFrom(profile.projects, "项目");
+    const source = tileType === "temp"
+      ? "下载区"
+      : this.randomFrom(profile.sources, "桌面");
+    const state = tileType === "temp"
+      ? this.randomFrom(["temp", "old", "duplicate"], "temp")
+      : this.randomFrom(profile.stateWeights, "normal");
+    const zone = tileType === "temp" || state === "duplicate"
+      ? "回收站"
+      : this.randomFrom(profile.zones, "项目文件夹");
+
+    return {
+      project,
+      source,
+      state,
+      zone,
+      createdAt: this.randomFrom(["今天", "昨天", "上周"], "今天"),
+    };
+  }
+
+  setTile(cell, tileType, special = null, meta = null) {
+    cell.tileType = tileType;
+    cell.special = special;
+    cell.meta = meta ? { ...meta } : this.randomTileMeta(tileType);
+  }
+
+  clearTile(cell) {
+    cell.tileType = null;
+    cell.special = null;
+    cell.meta = null;
   }
 
   createEmptyBoard() {
@@ -149,8 +196,7 @@ export class CleanupCore {
         }
 
         const options = this.level.tileTypes.filter((tileType) => !this.causesMatch(board, row, col, tileType));
-        cell.tileType = options.length ? options[this.randomIndex(options.length)] : this.randomTileType();
-        cell.special = null;
+        this.setTile(cell, options.length ? options[this.randomIndex(options.length)] : this.randomTileType());
       }
     }
   }
@@ -184,8 +230,10 @@ export class CleanupCore {
     const payload = copyPayload(board[a.row][a.col]);
     board[a.row][a.col].tileType = board[b.row][b.col].tileType;
     board[a.row][a.col].special = board[b.row][b.col].special;
+    board[a.row][a.col].meta = board[b.row][b.col].meta ? { ...board[b.row][b.col].meta } : null;
     board[b.row][b.col].tileType = payload.tileType;
     board[b.row][b.col].special = payload.special;
+    board[b.row][b.col].meta = payload.meta ? { ...payload.meta } : null;
   }
 
   performSwap(a, b) {
@@ -319,15 +367,14 @@ export class CleanupCore {
         col: cellPos.col,
         tileType: cell.tileType,
         special: cell.special,
+        meta: cell.meta ? { ...cell.meta } : null,
       });
-      cell.tileType = null;
-      cell.special = null;
+      this.clearTile(cell);
     });
 
     resolution.spawns.forEach((spawn) => {
       const cell = this.board[spawn.row][spawn.col];
-      cell.tileType = spawn.tileType;
-      cell.special = spawn.special;
+      this.setTile(cell, spawn.tileType, spawn.special, spawn.meta);
     });
 
     const scoreGain =
@@ -364,15 +411,23 @@ export class CleanupCore {
     };
   }
 
-  updateGoalProgress(clearedTiles, blockersRemoved) {
+  updateGoalProgress(clearedTiles, blockersRemoved, actionType = null) {
     this.level.goals.forEach((goal, index) => {
       const key = this.goalKey(goal, index);
       if (goal.type === "collect_tile") {
         const count = clearedTiles.filter((tile) => tile.tileType === goal.tileType).length;
         this.goalsProgress[key] += count;
+      } else if (goal.type === "collect_project") {
+        const count = clearedTiles.filter((tile) => tile.meta?.project === goal.project).length;
+        this.goalsProgress[key] += count;
+      } else if (goal.type === "collect_state") {
+        const count = clearedTiles.filter((tile) => tile.meta?.state === goal.state).length;
+        this.goalsProgress[key] += count;
       } else if (goal.type === "clear_blocker") {
         const count = blockersRemoved.filter((item) => item.type === goal.blockerType).length;
         this.goalsProgress[key] += count;
+      } else if (goal.type === "use_desktop_action" && actionType === goal.action) {
+        this.goalsProgress[key] += 1;
       } else if (goal.type === "reach_cleanliness") {
         this.goalsProgress[key] = this.cleanliness;
       }
@@ -401,6 +456,7 @@ export class CleanupCore {
           survivors.push({
             tileType: cell.tileType,
             special: cell.special,
+            meta: cell.meta ? { ...cell.meta } : null,
             fromRow: row,
           });
         }
@@ -415,14 +471,14 @@ export class CleanupCore {
         const survivor = survivors[survivorIndex];
 
         if (survivor) {
-          cell.tileType = survivor.tileType;
-          cell.special = survivor.special;
+          this.setTile(cell, survivor.tileType, survivor.special, survivor.meta);
           if (survivor.fromRow !== row) {
             drops.push({
               from: { row: survivor.fromRow, col },
               to: { row, col },
               tileType: survivor.tileType,
               special: survivor.special,
+              meta: survivor.meta ? { ...survivor.meta } : null,
               isNew: false,
             });
           }
@@ -430,13 +486,13 @@ export class CleanupCore {
         } else {
           spawnCount += 1;
           const tileType = this.randomTileType();
-          cell.tileType = tileType;
-          cell.special = null;
+          this.setTile(cell, tileType);
           drops.push({
             from: { row: -spawnCount, col },
             to: { row, col },
             tileType,
             special: null,
+            meta: cell.meta ? { ...cell.meta } : null,
             isNew: true,
           });
         }
@@ -593,11 +649,13 @@ export class CleanupCore {
       }
 
       const spawnCell = this.chooseSpawnCell(match, lastSwap);
+      const spawnSource = this.board[spawnCell.row][spawnCell.col];
       spawns.push({
         row: spawnCell.row,
         col: spawnCell.col,
         special: match.specialType,
         tileType: match.tileType,
+        meta: spawnSource.meta ? { ...spawnSource.meta } : null,
       });
       clearSet.delete(cellKey(spawnCell.row, spawnCell.col));
     });
@@ -727,6 +785,121 @@ export class CleanupCore {
     return null;
   }
 
+  performDesktopAction(action, target = null) {
+    const beforeBoard = copyBoard(this.board);
+    const targetCell = this.resolveDesktopActionTarget(action, target);
+    if (!targetCell) {
+      return { valid: false, reason: "no_target", beforeBoard };
+    }
+
+    const { row, col } = targetCell;
+    const cell = this.board[row][col];
+    const clearedTiles = [];
+    const blockersRemoved = [];
+    let scoreGain = 0;
+    let cleanlinessGain = 0;
+    let actionLabel = "";
+
+    if (action === "archive") {
+      if (!cell.tileType || cell.tileType === "temp") {
+        return { valid: false, reason: "archive_requires_file", beforeBoard };
+      }
+      clearedTiles.push({
+        row,
+        col,
+        tileType: cell.tileType,
+        special: cell.special,
+        meta: cell.meta ? { ...cell.meta } : null,
+      });
+      actionLabel = `归档到 ${cell.meta?.zone || "项目文件夹"}`;
+      scoreGain = 140;
+      cleanlinessGain = 5;
+      this.clearTile(cell);
+    } else if (action === "trash") {
+      const canTrash = cell.tileType && (cell.tileType === "temp" || cell.meta?.state === "duplicate" || cell.meta?.state === "old");
+      if (!canTrash) {
+        return { valid: false, reason: "trash_requires_junk", beforeBoard };
+      }
+      clearedTiles.push({
+        row,
+        col,
+        tileType: cell.tileType,
+        special: cell.special,
+        meta: cell.meta ? { ...cell.meta } : null,
+      });
+      actionLabel = "移入回收站";
+      scoreGain = 130;
+      cleanlinessGain = 6;
+      this.clearTile(cell);
+    } else if (action === "close") {
+      if (!cell.blocker || cell.blocker.type !== "popup") {
+        return { valid: false, reason: "close_requires_popup", beforeBoard };
+      }
+      blockersRemoved.push({ type: "popup", row, col });
+      cell.blocker = null;
+      actionLabel = "关闭弹窗";
+      scoreGain = 170;
+      cleanlinessGain = 8;
+    } else if (action === "pin") {
+      if (!cell.blocker || cell.blocker.type !== "sticky_note") {
+        return { valid: false, reason: "pin_requires_note", beforeBoard };
+      }
+      blockersRemoved.push({ type: "sticky_note", row, col });
+      cell.blocker = null;
+      actionLabel = "便签归入待办";
+      scoreGain = 150;
+      cleanlinessGain = 6;
+    } else {
+      return { valid: false, reason: "unknown_action", beforeBoard };
+    }
+
+    this.desktopActions[action] = (this.desktopActions[action] || 0) + 1;
+    this.score += scoreGain;
+    this.cleanliness = Math.max(0, Math.min(100, this.cleanliness + Math.min(cleanlinessGain, 100 - this.cleanliness)));
+    this.updateGoalProgress(clearedTiles, blockersRemoved, action);
+
+    const dropData = clearedTiles.length ? this.collapseAndRefill() : { drops: [] };
+    const completed = this.checkCompletion();
+
+    return {
+      valid: true,
+      action,
+      actionLabel,
+      beforeBoard,
+      clearedTiles,
+      blockersRemoved,
+      drops: dropData.drops,
+      endBoard: copyBoard(this.board),
+      scoreGain,
+      scoreAfter: this.score,
+      cleanlinessGain,
+      cleanlinessAfter: this.cleanliness,
+      goalsAfter: this.captureGoalSnapshot(),
+      bestComboAfter: this.bestCombo,
+      movesUsedAfter: this.movesUsed,
+      completed,
+      stars: completed ? this.computeStars() : 0,
+    };
+  }
+
+  resolveDesktopActionTarget(action, target) {
+    if (target && isInsideBoard(target.row, target.col)) {
+      return { row: target.row, col: target.col };
+    }
+
+    if (action === "close") {
+      for (let row = 0; row < BOARD_SIZE; row += 1) {
+        for (let col = 0; col < BOARD_SIZE; col += 1) {
+          if (this.board[row][col].blocker?.type === "popup") {
+            return { row, col };
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
   shuffle() {
     const beforeBoard = copyBoard(this.board);
     const movable = [];
@@ -743,6 +916,7 @@ export class CleanupCore {
           col,
           tileType: cell.tileType,
           special: cell.special,
+          meta: cell.meta ? { ...cell.meta } : null,
         });
       }
     }
@@ -757,8 +931,7 @@ export class CleanupCore {
       shuffled.forEach((payload, index) => {
         const target = movable[index];
         const cell = this.board[target.row][target.col];
-        cell.tileType = payload.tileType;
-        cell.special = payload.special;
+        this.setTile(cell, payload.tileType, payload.special, payload.meta);
       });
 
       if (!this.findMatches(this.board).length && this.findPossibleMove(this.board)) {

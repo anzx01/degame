@@ -4,10 +4,79 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>桌面整理大师 MVP</title>
-    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./styles.css?v=fit-20260427f">
   </head>
   <body>
-    <div class="app-shell">
+    <section id="realDesktopApp" class="real-desktop-app" aria-label="真实电脑桌面整理模拟器" hidden>
+      <header class="real-desktop-topbar">
+        <div>
+          <div class="desktop-kicker">Desktop Organizer</div>
+          <h1>真实电脑桌面整理</h1>
+        </div>
+        <div class="desktop-command-bar">
+          <button id="newFolderButton" class="desktop-command" type="button">新建文件夹</button>
+          <button id="sortTypeButton" class="desktop-command" type="button">按类型排列</button>
+          <button id="groupProjectButton" class="desktop-command" type="button">按项目归档</button>
+          <button id="cleanDownloadsButton" class="desktop-command" type="button">清理下载残留</button>
+          <button id="restoreTrashButton" class="desktop-command" type="button">恢复回收站</button>
+          <button id="resetDesktopButton" class="desktop-command desktop-command-secondary" type="button">重置桌面</button>
+        </div>
+      </header>
+
+      <main class="real-desktop-layout">
+        <section class="desktop-monitor">
+          <div class="desktop-window-bar">
+            <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+            <div id="desktopPathText" class="desktop-path">桌面</div>
+            <div id="desktopClockText" class="desktop-clock">--:--</div>
+          </div>
+          <div id="desktopSurface" class="desktop-surface" tabindex="0" aria-label="桌面区域"></div>
+          <div id="desktopFeedbackLayer" class="desktop-feedback-layer" aria-hidden="true"></div>
+          <div id="selectionBox" class="selection-box hidden"></div>
+          <div id="folderWindow" class="folder-window hidden" role="dialog" aria-modal="false">
+            <div class="folder-window-head">
+              <strong id="folderWindowTitle">文件夹</strong>
+              <button id="closeFolderWindow" type="button" aria-label="关闭文件夹">×</button>
+            </div>
+            <div id="folderWindowBody" class="folder-window-body"></div>
+          </div>
+        </section>
+
+        <aside class="desktop-side-panel">
+          <section class="desktop-card">
+            <div class="desktop-card-title">选中对象</div>
+            <div id="selectionSummary" class="selection-summary">未选中任何文件</div>
+            <div class="desktop-action-grid">
+              <button id="openSelectedButton" class="desktop-action" type="button">打开</button>
+              <button id="renameSelectedButton" class="desktop-action" type="button">重命名</button>
+              <button id="moveToFolderButton" class="desktop-action" type="button">移入文件夹</button>
+              <button id="moveToTrashButton" class="desktop-action danger" type="button">移入回收站</button>
+            </div>
+          </section>
+
+          <section class="desktop-card">
+            <div class="desktop-card-title">桌面状态</div>
+            <div class="desktop-progress-row">
+              <span>整洁度</span>
+              <strong id="desktopCleanScore">0%</strong>
+            </div>
+            <div class="desktop-progress"><span id="desktopCleanFill"></span></div>
+            <div id="desktopStats" class="desktop-stats"></div>
+            <div class="desktop-juice">
+              <div><span>整理分数</span><strong id="desktopScore">0</strong></div>
+              <div><span>连锁</span><strong id="desktopCombo">x0</strong></div>
+            </div>
+          </section>
+
+          <section class="desktop-card">
+            <div class="desktop-card-title">整理日志</div>
+            <ul id="desktopActivityList" class="desktop-activity-list"></ul>
+          </section>
+        </aside>
+      </main>
+    </section>
+
+    <div class="app-shell legacy-game-shell">
       <aside class="panel brand-panel">
         <div class="eyebrow">2D MVP</div>
         <h1>桌面整理大师</h1>
@@ -15,7 +84,7 @@
           固定镜头、纯 2D、桌面整理题材三消。当前版本已包含核心关卡、障碍、特殊整理工具、整洁度和本地进度。
         </p>
 
-        <div class="button-stack">
+        <div class="button-stack game-control-bar">
           <button id="restartButton" class="button button-primary" type="button">重开本关</button>
           <button id="hintButton" class="button" type="button">显示提示</button>
           <button id="shuffleButton" class="button" type="button">整理洗牌</button>
@@ -24,7 +93,7 @@
 
         <section class="panel-section auth-section">
           <div class="section-title">邮箱账号</div>
-          <div id="authSignedOut" class="auth-box">
+          <form id="authSignedOut" class="auth-box">
             <div class="auth-field">
               <label for="authEmail">邮箱</label>
               <input id="authEmail" class="auth-input" type="email" autocomplete="email" placeholder="name@example.com">
@@ -38,7 +107,7 @@
               <button id="registerButton" class="button" type="button">注册</button>
             </div>
             <p id="authMessage" class="auth-message" aria-live="polite"></p>
-          </div>
+          </form>
           <div id="authSignedIn" class="auth-box hidden">
             <div class="account-card">
               <div class="account-label">当前账号</div>
@@ -48,7 +117,7 @@
           </div>
         </section>
 
-        <section class="panel-section">
+        <section class="panel-section settings-section">
           <div class="section-title">设置</div>
           <div class="toggle-grid">
             <button id="soundToggle" class="toggle-pill" type="button"></button>
@@ -59,12 +128,12 @@
           <button id="soundTestButton" class="button sound-test-button" type="button">测试音效</button>
         </section>
 
-        <section class="panel-section">
+        <section class="panel-section control-help-section">
           <div class="section-title">章节总览</div>
           <div id="chapterCards" class="chapter-grid"></div>
         </section>
 
-        <section class="panel-section">
+        <section class="panel-section rules-section">
           <div class="section-title">章节</div>
           <div id="levelList" class="level-list"></div>
         </section>
@@ -142,24 +211,36 @@
           <p id="leaderboardEmpty" class="leaderboard-empty">登录后通关会记录成绩。</p>
         </section>
 
-        <section class="panel-section">
+        <section class="panel-section desktop-tools-section">
+          <div class="section-title">文件夹 / 垃圾箱</div>
+          <div id="desktopSelection" class="desktop-selection">三消后的文件会自动进入对应文件夹或垃圾箱。</div>
+          <div id="desktopTray" class="desktop-tray desktop-target-tray"></div>
+          <div class="desktop-tool-grid legacy-hidden-tools" hidden>
+            <button id="archiveButton" class="button" type="button">归档到文件夹</button>
+            <button id="trashButton" class="button" type="button">移入回收站</button>
+            <button id="closePopupButton" class="button" type="button">关闭弹窗</button>
+            <button id="searchDesktopButton" class="button" type="button">搜索同项目</button>
+          </div>
+        </section>
+
+        <section class="panel-section goal-section">
           <div class="section-title">整理任务</div>
           <ul id="goalList" class="goal-list"></ul>
         </section>
 
-        <section class="panel-section">
+        <section class="panel-section status-section">
           <div class="section-title">当前状态</div>
           <p id="statusText" class="status-text" aria-live="polite">
             交换相邻图标，完成一次桌面清理。
           </p>
         </section>
 
-        <section class="panel-section">
+        <section class="panel-section activity-section">
           <div class="section-title">最近事件</div>
           <ul id="activityList" class="activity-list"></ul>
         </section>
 
-        <section class="panel-section">
+        <section class="panel-section control-help-section">
           <div class="section-title">控制方式</div>
           <ul class="note-list">
             <li>点击两个相邻图标交换</li>
@@ -169,7 +250,7 @@
           </ul>
         </section>
 
-        <section class="panel-section">
+        <section class="panel-section rules-section">
           <div class="section-title">规则摘要</div>
           <ul class="note-list">
             <li>4 连生成批量归档</li>
@@ -234,6 +315,6 @@
       </div>
     </div>
 
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="./app.js?v=auth-20260427i"></script>
   </body>
 </html>

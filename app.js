@@ -3,6 +3,9 @@ import { CleanupCore, copyBoard, cellKey, areAdjacent, isInsideBoard } from "./g
 import { BOARD_SIZE, CHAPTERS, DEFAULT_SETTINGS, LEVELS, TILE_DEFS, describeGoal } from "./levels.js";
 
 const PROFILE_KEY = "degame-mvp-save-v2";
+const AUTH_KEY = "degame-mvp-auth-v1";
+const SESSION_KEY = "degame-mvp-session-v1";
+const LEADERBOARD_KEY = "degame-mvp-leaderboard-v1";
 const TILE_SIZE = 66;
 const BOARD_PIXEL_SIZE = TILE_SIZE * BOARD_SIZE;
 const BOARD_X = 96;
@@ -61,6 +64,30 @@ function createSaveData(settings = {}) {
   };
 }
 
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function isBetterLeaderboardRecord(next, current) {
+  if (!current) {
+    return true;
+  }
+  if (next.stars !== current.stars) {
+    return next.stars > current.stars;
+  }
+  if (next.score !== current.score) {
+    return next.score > current.score;
+  }
+  if (next.moves !== current.moves) {
+    return next.moves < current.moves;
+  }
+  return new Date(next.completedAt).getTime() < new Date(current.completedAt).getTime();
+}
+
 class DesktopCleanupApp {
   constructor() {
     this.canvas = document.getElementById("gameCanvas");
@@ -91,7 +118,21 @@ class DesktopCleanupApp {
     this.hintButton = document.getElementById("hintButton");
     this.shuffleButton = document.getElementById("shuffleButton");
     this.resetProgressButton = document.getElementById("resetProgressButton");
+    this.authSignedOut = document.getElementById("authSignedOut");
+    this.authSignedIn = document.getElementById("authSignedIn");
+    this.authEmail = document.getElementById("authEmail");
+    this.authPassword = document.getElementById("authPassword");
+    this.loginButton = document.getElementById("loginButton");
+    this.registerButton = document.getElementById("registerButton");
+    this.logoutButton = document.getElementById("logoutButton");
+    this.authMessage = document.getElementById("authMessage");
+    this.accountEmail = document.getElementById("accountEmail");
+    this.leaderboardLevel = document.getElementById("leaderboardLevel");
+    this.leaderboardCount = document.getElementById("leaderboardCount");
+    this.leaderboardList = document.getElementById("leaderboardList");
+    this.leaderboardEmpty = document.getElementById("leaderboardEmpty");
     this.soundToggle = document.getElementById("soundToggle");
+    this.soundTestButton = document.getElementById("soundTestButton");
     this.autoHintToggle = document.getElementById("autoHintToggle");
     this.contrastToggle = document.getElementById("contrastToggle");
     this.vibrationToggle = document.getElementById("vibrationToggle");
@@ -126,6 +167,8 @@ class DesktopCleanupApp {
     this.chapterIntroContinue = document.getElementById("chapterIntroContinue");
 
     this.audio = new SoundEngine();
+    this.audioUnlockConfirmed = false;
+    this.currentUser = this.loadSession();
     this.saveData = this.loadProfile();
     this.currentLevelIndex = clamp(this.saveData.currentLevel, 0, LEVELS.length - 1);
     this.selectedCell = null;
@@ -149,6 +192,7 @@ class DesktopCleanupApp {
     this.createChapterCards();
     this.createLevelButtons();
     this.bindEvents();
+    this.renderAuthState();
     this.applySettings();
     this.startLevel(this.currentLevelIndex);
 
@@ -157,7 +201,7 @@ class DesktopCleanupApp {
 
   loadProfile() {
     try {
-      const raw = localStorage.getItem(PROFILE_KEY);
+      const raw = localStorage.getItem(this.getProfileKey());
       if (!raw) {
         return createSaveData();
       }
@@ -177,7 +221,56 @@ class DesktopCleanupApp {
   }
 
   persistProfile() {
-    localStorage.setItem(PROFILE_KEY, JSON.stringify(this.saveData));
+    localStorage.setItem(this.getProfileKey(), JSON.stringify(this.saveData));
+  }
+
+  getProfileKey(email = this.currentUser?.email) {
+    return email ? `${PROFILE_KEY}:${email}` : PROFILE_KEY;
+  }
+
+  loadSession() {
+    try {
+      const email = normalizeEmail(localStorage.getItem(SESSION_KEY));
+      const accounts = this.loadAccounts();
+      return accounts[email] ? { email } : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  loadAccounts() {
+    try {
+      return JSON.parse(localStorage.getItem(AUTH_KEY)) || {};
+    } catch (error) {
+      return {};
+    }
+  }
+
+  persistAccounts(accounts) {
+    localStorage.setItem(AUTH_KEY, JSON.stringify(accounts));
+  }
+
+  async hashPassword(email, password) {
+    const payload = `${normalizeEmail(email)}:${password}`;
+    if (window.crypto?.subtle && window.TextEncoder) {
+      const bytes = new TextEncoder().encode(payload);
+      const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+      return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+    return btoa(unescape(encodeURIComponent(payload)));
+  }
+
+  loadLeaderboard() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(LEADERBOARD_KEY));
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  persistLeaderboard(records) {
+    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(records));
   }
 
   get settings() {
@@ -207,6 +300,7 @@ class DesktopCleanupApp {
   }
 
   bindEvents() {
+    this.bindAudioUnlockEvents();
     this.canvas.addEventListener("pointerdown", this.handlePointerDown.bind(this));
     this.canvas.addEventListener("pointermove", this.handlePointerMove.bind(this));
     this.canvas.addEventListener("pointerup", this.handlePointerUp.bind(this));
@@ -217,13 +311,31 @@ class DesktopCleanupApp {
     this.hintButton.addEventListener("click", () => this.showHint(true));
     this.shuffleButton.addEventListener("click", () => this.handleShuffle());
     this.resetProgressButton.addEventListener("click", () => this.handleResetProgress());
+    this.loginButton.addEventListener("click", () => this.handleLogin());
+    this.registerButton.addEventListener("click", () => this.handleRegister());
+    this.logoutButton.addEventListener("click", () => this.handleLogout());
+    [this.authEmail, this.authPassword].forEach((input) => {
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          this.handleLogin();
+        }
+      });
+    });
     this.soundToggle.addEventListener("click", () => {
       this.settings.soundEnabled = !this.settings.soundEnabled;
       this.applySettings();
       if (this.settings.soundEnabled) {
-        this.activateAudio();
-        this.audio.playHint();
+        this.activateAudio(true).then(() => this.audio.playHint());
       }
+    });
+    this.soundTestButton.addEventListener("click", () => {
+      this.settings.soundEnabled = true;
+      this.applySettings();
+      this.audioUnlockConfirmed = false;
+      this.activateAudio(true).then(() => {
+        this.audio.playHint();
+        this.setStatus("音效测试已触发。若仍无声，请检查浏览器标签页和系统输出设备。");
+      });
     });
     this.autoHintToggle.addEventListener("click", () => {
       this.settings.autoHint = !this.settings.autoHint;
@@ -255,6 +367,7 @@ class DesktopCleanupApp {
     });
 
     window.addEventListener("keydown", (event) => {
+      this.activateAudio();
       const key = event.key.toLowerCase();
       if (this.isResultVisible()) {
         if (key === "escape") {
@@ -281,8 +394,113 @@ class DesktopCleanupApp {
     });
   }
 
-  activateAudio() {
-    this.audio.wake().catch(() => {});
+  bindAudioUnlockEvents() {
+    const unlock = () => {
+      this.activateAudio(true);
+    };
+    ["pointerdown", "mousedown", "touchstart", "click"].forEach((eventName) => {
+      window.addEventListener(eventName, unlock, { capture: true, passive: true });
+    });
+  }
+
+  async handleRegister() {
+    const email = normalizeEmail(this.authEmail.value);
+    const password = this.authPassword.value;
+    if (!isValidEmail(email)) {
+      this.setAuthMessage("请输入有效邮箱。", "warn");
+      return;
+    }
+    if (password.length < 6) {
+      this.setAuthMessage("密码至少需要 6 位。", "warn");
+      return;
+    }
+
+    const accounts = this.loadAccounts();
+    if (accounts[email]) {
+      this.setAuthMessage("这个邮箱已经注册，请直接登录。", "warn");
+      return;
+    }
+
+    accounts[email] = {
+      email,
+      name: email.split("@")[0],
+      passwordHash: await this.hashPassword(email, password),
+      createdAt: new Date().toISOString(),
+    };
+    this.persistAccounts(accounts);
+    this.signIn(email, "注册成功，已切换到你的账号进度。");
+  }
+
+  async handleLogin() {
+    const email = normalizeEmail(this.authEmail.value);
+    const password = this.authPassword.value;
+    const accounts = this.loadAccounts();
+    if (!isValidEmail(email) || !accounts[email]) {
+      this.setAuthMessage("邮箱或密码不正确。", "warn");
+      return;
+    }
+
+    const passwordHash = await this.hashPassword(email, password);
+    if (accounts[email].passwordHash !== passwordHash) {
+      this.setAuthMessage("邮箱或密码不正确。", "warn");
+      return;
+    }
+
+    this.signIn(email, "登录成功，已载入账号进度。");
+  }
+
+  handleLogout() {
+    if (this.interactionLocked) {
+      return;
+    }
+    localStorage.removeItem(SESSION_KEY);
+    this.currentUser = null;
+    this.saveData = this.loadProfile();
+    this.currentLevelIndex = clamp(this.saveData.currentLevel, 0, LEVELS.length - 1);
+    this.authPassword.value = "";
+    this.renderAuthState();
+    this.startLevel(this.currentLevelIndex);
+    this.setAuthMessage("已退出登录，当前使用本地游客进度。", "neutral");
+  }
+
+  signIn(email, message) {
+    if (this.interactionLocked) {
+      this.setAuthMessage("当前动画结束后再切换账号。", "warn");
+      return;
+    }
+    localStorage.setItem(SESSION_KEY, email);
+    this.currentUser = { email };
+    this.saveData = this.loadProfile();
+    this.currentLevelIndex = clamp(this.saveData.currentLevel, 0, LEVELS.length - 1);
+    this.authPassword.value = "";
+    this.renderAuthState();
+    this.startLevel(this.currentLevelIndex);
+    this.setAuthMessage(message, "positive");
+  }
+
+  setAuthMessage(message, tone = "neutral") {
+    this.authMessage.textContent = message;
+    this.authMessage.dataset.tone = tone;
+  }
+
+  renderAuthState() {
+    const signedIn = Boolean(this.currentUser?.email);
+    this.authSignedOut.classList.toggle("hidden", signedIn);
+    this.authSignedIn.classList.toggle("hidden", !signedIn);
+    this.accountEmail.textContent = signedIn ? this.currentUser.email : "";
+    if (!signedIn && !this.authMessage.textContent) {
+      this.setAuthMessage("未登录时会使用本地游客进度。", "neutral");
+    }
+  }
+
+  async activateAudio(playConfirmation = false) {
+    const wasUnlocked = this.audio.unlocked;
+    if (playConfirmation && !wasUnlocked && !this.audioUnlockConfirmed) {
+      this.audioUnlockConfirmed = true;
+      this.audio.playUnlock();
+    }
+    const ready = await this.audio.wake().catch(() => false);
+    return ready;
   }
 
   maybeVibrate(pattern) {
@@ -336,6 +554,96 @@ class DesktopCleanupApp {
         <div class="activity-text">${item.message}</div>
       `;
       this.activityList.appendChild(node);
+    });
+  }
+
+  recordLeaderboard(stars) {
+    if (!this.currentUser?.email) {
+      this.renderLeaderboard();
+      return;
+    }
+
+    const level = LEVELS[this.currentLevelIndex];
+    const records = this.loadLeaderboard();
+    const nextRecord = {
+      email: this.currentUser.email,
+      name: this.currentUser.email.split("@")[0],
+      levelId: level.id,
+      levelName: level.name,
+      chapter: level.chapter,
+      stars,
+      score: this.core.score,
+      moves: this.core.movesUsed,
+      bestCombo: this.core.bestCombo,
+      completedAt: new Date().toISOString(),
+    };
+    const existingIndex = records.findIndex((record) => record.email === nextRecord.email && record.levelId === level.id);
+    if (existingIndex === -1) {
+      records.push(nextRecord);
+    } else if (isBetterLeaderboardRecord(nextRecord, records[existingIndex])) {
+      records[existingIndex] = nextRecord;
+    }
+    this.persistLeaderboard(records);
+    this.renderLeaderboard();
+  }
+
+  getLeaderboardRecords(levelId = LEVELS[this.currentLevelIndex]?.id) {
+    return this.loadLeaderboard()
+      .filter((record) => record.levelId === levelId)
+      .sort((a, b) => {
+        if (b.stars !== a.stars) {
+          return b.stars - a.stars;
+        }
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+        if (a.moves !== b.moves) {
+          return a.moves - b.moves;
+        }
+        return new Date(a.completedAt).getTime() - new Date(b.completedAt).getTime();
+      });
+  }
+
+  renderLeaderboard() {
+    if (!this.leaderboardList || !this.core) {
+      return;
+    }
+
+    const records = this.getLeaderboardRecords(this.core.level.id);
+    this.leaderboardLevel.textContent = this.core.level.name;
+    this.leaderboardCount.textContent = `${records.length} 人`;
+    this.leaderboardList.innerHTML = "";
+    this.leaderboardEmpty.classList.toggle("hidden", records.length > 0);
+
+    records.slice(0, 8).forEach((record, index) => {
+      const item = document.createElement("li");
+      item.className = "leaderboard-item";
+      if (record.email === this.currentUser?.email) {
+        item.classList.add("is-me");
+      }
+
+      const rank = document.createElement("span");
+      rank.className = "leaderboard-rank";
+      rank.textContent = String(index + 1);
+
+      const body = document.createElement("span");
+      body.className = "leaderboard-body";
+
+      const name = document.createElement("span");
+      name.className = "leaderboard-name";
+      name.textContent = record.name || record.email;
+
+      const meta = document.createElement("span");
+      meta.className = "leaderboard-meta";
+      meta.textContent = `${record.stars}★ · ${record.moves} 步 · 连锁 ${record.bestCombo}`;
+
+      const score = document.createElement("span");
+      score.className = "leaderboard-score";
+      score.textContent = String(record.score);
+
+      body.append(name, meta);
+      item.append(rank, body, score);
+      this.leaderboardList.appendChild(item);
     });
   }
 
@@ -581,6 +889,7 @@ class DesktopCleanupApp {
     this.updateHud();
     this.setStatus("交换相邻图标，先把这一屏从杂乱推回整洁。");
     this.pushActivity(`进入 ${this.core.level.chapter} · ${this.core.level.name}`, "neutral");
+    this.renderLeaderboard();
     this.maybeShowChapterIntro(index);
   }
 
@@ -918,6 +1227,7 @@ class DesktopCleanupApp {
       : this.core.movesUsed;
     this.saveData.unlockedLevel = Math.min(LEVELS.length - 1, Math.max(this.saveData.unlockedLevel, this.currentLevelIndex + 1));
     this.persistProfile();
+    this.recordLeaderboard(stars);
     this.refreshChapterCards();
     this.refreshLevelButtons();
     this.updateHud();
@@ -2072,6 +2382,15 @@ class DesktopCleanupApp {
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  new DesktopCleanupApp();
-});
+export {
+  DesktopCleanupApp,
+  isBetterLeaderboardRecord,
+  isValidEmail,
+  normalizeEmail,
+};
+
+if (typeof window !== "undefined") {
+  window.addEventListener("DOMContentLoaded", () => {
+    new DesktopCleanupApp();
+  });
+}

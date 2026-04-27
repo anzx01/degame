@@ -22,6 +22,32 @@
           <button id="resetProgressButton" class="button button-secondary" type="button">重置进度</button>
         </div>
 
+        <section class="panel-section auth-section">
+          <div class="section-title">邮箱账号</div>
+          <div id="authSignedOut" class="auth-box">
+            <div class="auth-field">
+              <label for="authEmail">邮箱</label>
+              <input id="authEmail" class="auth-input" type="email" autocomplete="email" placeholder="name@example.com">
+            </div>
+            <div class="auth-field">
+              <label for="authPassword">密码</label>
+              <input id="authPassword" class="auth-input" type="password" autocomplete="current-password" placeholder="至少 6 位">
+            </div>
+            <div class="auth-actions">
+              <button id="loginButton" class="button button-primary" type="button">登录</button>
+              <button id="registerButton" class="button" type="button">注册</button>
+            </div>
+            <p id="authMessage" class="auth-message" aria-live="polite"></p>
+          </div>
+          <div id="authSignedIn" class="auth-box hidden">
+            <div class="account-card">
+              <div class="account-label">当前账号</div>
+              <div id="accountEmail" class="account-email"></div>
+            </div>
+            <button id="logoutButton" class="button button-secondary" type="button">退出登录</button>
+          </div>
+        </section>
+
         <section class="panel-section">
           <div class="section-title">设置</div>
           <div class="toggle-grid">
@@ -30,6 +56,7 @@
             <button id="contrastToggle" class="toggle-pill" type="button"></button>
             <button id="vibrationToggle" class="toggle-pill" type="button"></button>
           </div>
+          <button id="soundTestButton" class="button sound-test-button" type="button">测试音效</button>
         </section>
 
         <section class="panel-section">
@@ -105,6 +132,16 @@
       </main>
 
       <aside class="panel side-panel">
+        <section class="panel-section leaderboard-section">
+          <div class="section-title">排行榜</div>
+          <div class="leaderboard-head">
+            <span id="leaderboardLevel">当前关卡</span>
+            <span id="leaderboardCount">0 人</span>
+          </div>
+          <ol id="leaderboardList" class="leaderboard-list"></ol>
+          <p id="leaderboardEmpty" class="leaderboard-empty">登录后通关会记录成绩。</p>
+        </section>
+
         <section class="panel-section">
           <div class="section-title">整理任务</div>
           <ul id="goalList" class="goal-list"></ul>

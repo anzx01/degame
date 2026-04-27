@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check:core": "node check-core.mjs"
+    "check:core": "node check-core.mjs",
+    "check:ui": "node check-ui.mjs"
   }
 }
